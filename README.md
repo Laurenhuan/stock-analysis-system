@@ -71,6 +71,8 @@ streamlit run app.py
 - 提交前运行测试并检查 `git diff`，禁止提交秘密、缓存或大体积原始数据。
 - Contract 变更应由受影响 Role 共同评审，不在单一实现中暗自改变接口。
 
+详细流程见 `docs/github_workflow.md`，路径责任见 `docs/code_ownership.md`。所有成员从同一个受保护的 `main` 开始，通过 Branch → Commit → Pull Request → Review → Merge 协作。
+
 ## V1.0 范围
 
 - A 股历史行情数据链路。
