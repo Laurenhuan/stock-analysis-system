@@ -1,0 +1,26 @@
+# Environment and secrets
+.env
+.venv/
+venv/
+
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Notebook and editor state
+.ipynb_checkpoints/
+.idea/
+.vscode/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+
+# Runtime data: keep the directories through their .gitkeep files
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
