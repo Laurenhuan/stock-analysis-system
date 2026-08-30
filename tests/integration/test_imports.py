@@ -12,8 +12,12 @@ MODULES = (
     "src.models.supervised.regression",
     "src.models.unsupervised.clustering",
     "src.visualization.charts",
+    "src.contracts.market_data",
+    "src.contracts.supervised",
+    "src.contracts.clustering",
     "src.services.market_service",
     "src.services.analysis_service",
+    "src.utils.exceptions",
 )
 
 
