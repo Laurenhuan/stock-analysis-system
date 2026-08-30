@@ -6,7 +6,7 @@
 
 ## 当前开发状态
 
-已完成仓库结构、团队责任边界、Draft v0.1 Contracts 和最小 Streamlit 应用。真实行情数据、分析结果及算法均未实现。
+已完成仓库结构、团队责任边界、Review Candidate v0.2 Contracts 和最小 Streamlit 应用。真实行情数据、分析结果及算法均未实现。
 
 ## 技术栈
 
