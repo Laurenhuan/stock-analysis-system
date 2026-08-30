@@ -15,3 +15,11 @@ AI 用于生成初始工程骨架、文档草案和验证建议。任何 Contrac
 - Agent: Codex / GPT Work Agent
 - Task: Convert approved engineering decisions into Review Candidate v0.2 documentation, importable schemas, exceptions, and Contract tests.
 - Human Responsibility: Review Contract semantics and diff, approve the Pull Request, and coordinate any interface or data-policy changes.
+
+## GitHub Collaboration Baseline
+
+- Role: Role 1
+- Agent: GPT Work / Codex
+- Task: GitHub collaboration baseline and parallel development launch
+- Agent responsibilities: Remote verification, PR workflow, GitHub templates, role ownership documentation, Phase 1 issue preparation.
+- Human responsibilities: Review remote destination, verify PR, approve merge, invite collaborators, confirm GitHub usernames.
