@@ -54,6 +54,23 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Day 1 Integration Prototype
+
+“数据概览”页面当前使用 `data/sample/day1_demo_market_data.csv` 中的合成
+Sample Data，验证以下最小链路：
+
+```text
+Streamlit 输入
+→ Service
+→ Sample DataFrame
+→ 股票与日期筛选
+→ 数据表
+→ 基础收盘价图
+```
+
+该 Sample Data 和基础价格图均为 **TEMPORARY / DAY-1 PROTOTYPE**，不是真实
+行情或正式分析模块。后续分别由 Role 2 的数据模块和 Role 3 的可视化模块替换。
+
 ## 团队 Role
 
 1. Role 1：系统架构、Streamlit、Service Layer、集成测试与工程治理。
