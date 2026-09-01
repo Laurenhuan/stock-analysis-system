@@ -59,7 +59,7 @@ except NoDataError as error:
     st.stop()
 
 st.subheader("Sample 行情数据")
-st.dataframe(overview, use_container_width=True, hide_index=True)
+st.dataframe(overview, width="stretch", hide_index=True)
 
 st.subheader("基础收盘价图")
 # TEMPORARY / DAY-1 PROTOTYPE: Role 3 will replace this demo chart.
@@ -71,7 +71,7 @@ price_figure = px.line(
     title=f"{selected_symbol} Sample Close Price",
 )
 price_figure.update_layout(xaxis_title="交易日期", yaxis_title="收盘价")
-st.plotly_chart(price_figure, use_container_width=True)
+st.plotly_chart(price_figure, width="stretch")
 
 st.caption(
     "数据流：Streamlit 输入 → Market Service → Sample CSV → 日期/股票筛选 → "
