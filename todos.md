@@ -28,7 +28,14 @@
 
 ## 无监督学习（Role 5）
 
-- [ ] K-Means 多股票风险收益画像聚类
+- [x] `build_stock_profiles()` 使用 Role 2 的 return 列（D2 完成）
+- [x] `run_clustering()` 加强输入校验（D2 完成）
+- [x] FEATURE_COLS 改为 tuple，异常类型统一（D2 完成）
+- [x] 39 个单元测试全部通过（D2 完成）
+- [x] 真实端到端测试：build_common_features → build_stock_profiles → run_clustering（D2 完成）
+- [x] PR #7 已推送并更新（D2 完成）
+- [ ] 等待组长 Review，根据意见修改
+- [ ] 与 Role 1 联调 Service Layer 接入
 
 ## 每日记录
 
