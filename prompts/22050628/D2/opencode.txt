@@ -1,0 +1,27 @@
+# Day 2 - opencode 使用记录（Role 6 / 线性回归与算法 Review）
+
+Agent: opencode
+日期: Day 2
+
+
+## 提示词（用户）
+1. 从Gitee 仓库解压出发，我应该怎么把它克隆到本地？
+2. 如何创建分支：分支名称、起点、属性、备注填什么？
+3. 不同起点有什么影响？
+4. Role 2 是否提交影响我提交吗？
+5.【共享数据方案更新】
+（1） 前复权规则不变，继续统一使用 qfq。
+（2） 标准 DataFrame 契约不变，仍然使用 symbol、trade_date、open、high、low、close、volume、amount 及现有公共指标。
+（3）因当前 Tushare 账号无法调用前复权接口，Role 2 增加 AkShare 作为主要行情获取方式，Tushare 保留为可选数据源。
+（4）. 共享数据目标调整为 10 支真实 A 股、每支约 250 个交易日。所有角色统一使用 Role 2 输出的标准 DataFrame，不得自行抓取或生成另一套数据。
+（5） 各算法本身不变：Decision Tree 继续分类，Linear Regression 继续回归，K-Means 继续聚类。
+（6） Role 3/4/5/6 不修改 src/data/，不直接调用 AkShare；数据问题统一反馈给 Role 2。
+（7）pages/ 和 Service Layer 仍由 Role 1 集成，其他角色提交可调用的函数、结果和测试。
+（8） 本次不修改公共字段契约。如果文档中存在“Tushare 是唯一数据源”的表述，由 Role 1 单独更新说明，Role 2 不直接修改 Contract。
+据此检查我的文件
+6. 提交的文件/推送/PR 怎么做？
+7.PR里的Role 1 Integration Guide该怎么写
+8.PR合并后如何更新本地项目
+9.在目录C:\Users\Administrator\Documents\Default Project\finlab-team\prompts下创建文件夹22050628，他有两个子目录D1和D2、每个子目录应该有一个opencode.txt。里面分别记录着Day1和Day2的提示词。
+
+
