@@ -19,8 +19,11 @@ Data-source semantics (``source`` parameter):
 The returned DataFrame carries provenance in ``df.attrs`` so the Service layer
 can tell the data origin without extra columns:
 
-- ``df.attrs["data_source"]`` -> ``"sample"`` | ``"tushare"`` | ``"akshare"``
-- ``df.attrs["is_sample"]``   -> ``True`` | ``False``
+- ``df.attrs["data_source"]``    -> ``"sample"`` | ``"tushare"`` | ``"akshare"``
+- ``df.attrs["is_sample"]``      -> ``True`` | ``False``
+- ``df.attrs["fallback_reason"]`` -> only set when ``source="auto"`` fell back
+  to sample; a short string describing why (missing token / provider failure /
+  empty result), so downstream can log or surface the actual cause.
 """
 
 from __future__ import annotations
@@ -123,20 +126,26 @@ def fetch_market_data(
         return _fetch_akshare_strict(symbols, start, end)
 
     # source == "auto"
+    fallback_reason: str | None = None
     if token:
         try:
             df = _fetch_tushare(symbols, start, end, token)
         except Exception as exc:  # noqa: BLE001 - categorize provider errors
             if not _is_fallback_allowed(exc):
                 raise  # programming / structure error: surface it
+            fallback_reason = f"Tushare 失败：{exc}"
             logger.warning("Tushare 不可用，回退 Sample：%s", exc)
         else:
             if df is not None and not df.empty:
                 return _mark_source(df, "tushare")
-            # Empty provider result also falls through to the sample below.
+            fallback_reason = "Tushare 返回空数据"
+    else:
+        fallback_reason = "未配置 TUSHARE_TOKEN"
 
     if fallback:
-        return _load_sample(symbols, start, end)
+        df = _load_sample(symbols, start, end)
+        df.attrs["fallback_reason"] = fallback_reason
+        return df
     raise NoDataError(f"未获取到 {symbols} 的行情数据")
 
 

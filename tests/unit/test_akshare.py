@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from src.contracts.market_data import BASE_MARKET_COLUMNS
-from src.data.clean import clean_market_data
+from src.data.clean import _detect_units, clean_market_data
 from src.data.fetch import (
     _convert_akshare,
     _symbol_with_exchange,
@@ -172,11 +172,19 @@ def test_fetch_akshare_invalid_symbol_not_swallowed(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_akshare_through_clean_no_double_conversion(monkeypatch):
+    """端到端：AkShare Provider 输出 → clean_market_data 不得二次换算单位。
+
+    AkShare 成交量在 Provider 内已完成 手→股 ×100，成交额本就是元；clean 的
+    ``units="auto"`` 必须识别为 standard（有 ``volume`` 列而非 Tushare 的 ``vol``），
+    不能像 Tushare 那样再把 amount ×1000。
+    """
     import akshare
 
     monkeypatch.setattr(akshare, "stock_zh_a_hist", lambda **k: _akshare_raw_frame())
 
     raw = fetch_market_data("600519.SH", source="akshare")
-    clean = clean_market_data(raw)  # units="auto"：无 vol 列 → 按 standard 不换算
+    # 关键：clean 的 auto 检测必须判为 standard，否则会按 Tushare 口径把 amount ×1000
+    assert _detect_units(raw) == "standard"
+    clean = clean_market_data(raw)  # units="auto"
     assert clean["volume"].tolist() == [3215600, 2022900]  # 仍是股，未被再 ×100
     assert clean["amount"].iloc[0] == pytest.approx(5.44e9)  # 仍是元，未被 ×1000

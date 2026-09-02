@@ -11,10 +11,16 @@ Data is **real** daily history (前复权 qfq)。样例抓取走 AkShare 新浪�
 AkShare 的新浪源；两源输出同为真实前复权日线，字段与单位一致）。Roles 3-5 可据此
 做 EDA / 聚类 / 分类 / 回归联调，无需 Tushare Token。联网时运行一次，
 ``data/sample/sample_daily.csv`` 即替换为真实样例，供离线回退读取。
+
+脚本支持 ``--out`` / ``--start`` / ``--end``，便于 Reviewer 在临时目录做真实冒烟
+测试；抓取与校验**全部通过后**才原子写入目标文件，任一股票失败或数据校验不过都
+不会覆盖现有 CSV（先写临时文件再 ``os.replace``）。
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -43,9 +49,9 @@ SYMBOLS = [
     "000725.SZ",  # 京东方A — 电子/面板
 ]
 
-START = "20240102"
-END = "20241231"
-OUT_PATH = Path(__file__).resolve().parents[1] / "data" / "sample" / "sample_daily.csv"
+DEFAULT_START = "20240102"
+DEFAULT_END = "20241231"
+DEFAULT_OUT = Path(__file__).resolve().parents[1] / "data" / "sample" / "sample_daily.csv"
 
 
 def _sina_symbol(symbol: str) -> str:
@@ -54,7 +60,7 @@ def _sina_symbol(symbol: str) -> str:
     return ("sh" if suffix == "SH" else "sz") + code
 
 
-def _fetch_sina(symbol: str) -> pd.DataFrame:
+def _fetch_sina(symbol: str, start: str, end: str) -> pd.DataFrame:
     """抓取单只股票：AkShare 新浪源 ``stock_zh_a_daily``（前复权 qfq）。
 
     新浪源 ``volume`` 已是「股」、``amount`` 已是「元」，直接映射为标准 8 字段，
@@ -63,7 +69,7 @@ def _fetch_sina(symbol: str) -> pd.DataFrame:
     import akshare as ak
 
     raw = ak.stock_zh_a_daily(
-        symbol=_sina_symbol(symbol), start_date=START, end_date=END, adjust="qfq"
+        symbol=_sina_symbol(symbol), start_date=start, end_date=end, adjust="qfq"
     )
     if raw is None or raw.empty:
         raise NoDataError(f"新浪源未返回 {symbol} 在指定区间内的数据")
@@ -72,11 +78,11 @@ def _fetch_sina(symbol: str) -> pd.DataFrame:
     return df[list(BASE_MARKET_COLUMNS)].copy()
 
 
-def fetch_one(symbol: str, retries: int = 3, delay: float = 2.0) -> pd.DataFrame:
+def fetch_one(symbol: str, start: str, end: str, retries: int = 3, delay: float = 2.0) -> pd.DataFrame:
     """抓取单只股票，带重试（新浪公开端点偶发抖动）。"""
     for attempt in range(1, retries + 1):
         try:
-            return _fetch_sina(symbol)
+            return _fetch_sina(symbol, start, end)
         except Exception as exc:  # noqa: BLE001 网络异常也重试
             if attempt == retries:
                 raise
@@ -85,10 +91,15 @@ def fetch_one(symbol: str, retries: int = 3, delay: float = 2.0) -> pd.DataFrame
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-def main() -> None:
+def build_sample(symbols: list[str], start: str, end: str, out_path: Path) -> pd.DataFrame:
+    """抓取全部股票 → 合并 → 校验 → 原子写入。
+
+    任一股票失败会直接抛异常（不写任何数据）；校验不过也会抛异常，避免把不完整或
+    异常数据覆盖到正式 CSV。
+    """
     frames = []
-    for symbol in SYMBOLS:
-        raw = fetch_one(symbol)
+    for symbol in symbols:
+        raw = fetch_one(symbol, start, end)
         cleaned = clean_market_data(raw)
         print(f"  {symbol}: {len(cleaned)} 行")
         frames.append(cleaned)
@@ -99,10 +110,11 @@ def main() -> None:
         .reset_index(drop=True)
     )
 
-    # 关键校验：10 支、联合键唯一。
-    assert out["symbol"].nunique() == len(SYMBOLS), "应当正好 10 支股票"
+    # 关键校验：股票数、联合键唯一。
+    assert out["symbol"].nunique() == len(symbols), "应当正好抓取到全部股票"
     assert not out[["symbol", "trade_date"]].duplicated().any(), "symbol+trade_date 必须唯一"
 
+    # 数据质量校验：不通过则抛异常，不写 CSV。
     n_nonpositive_vol = int((out["volume"] <= 0).sum())
     n_nonpositive_amt = int((out["amount"] <= 0).sum())
     bad_ohlc = int(
@@ -112,24 +124,46 @@ def main() -> None:
         ).sum()
     )
     if n_nonpositive_vol or n_nonpositive_amt or bad_ohlc:
-        print(
-            f"  [提示] volume<=0: {n_nonpositive_vol}, amount<=0: {n_nonpositive_amt}, "
-            f"OHLC 异常: {bad_ohlc}"
+        raise ValueError(
+            f"数据校验失败：volume<=0 {n_nonpositive_vol} 行、amount<=0 {n_nonpositive_amt} 行、"
+            f"OHLC 异常 {bad_ohlc} 行，未写入 CSV"
         )
 
     # Sample CSV 里 trade_date 存成 "YYYYMMDD" 字符串，与 fetch 的字符串区间过滤一致。
     out["trade_date"] = out["trade_date"].dt.strftime("%Y%m%d")
     # 成交量是离散「股」，取整；成交额是「元」，保留小数。
     out["volume"] = out["volume"].round().astype("int64")
-    out.to_csv(OUT_PATH, index=False)
 
-    print(f"\n已生成 {OUT_PATH}")
+    # 原子写入：先写临时文件再 rename，避免写到一半损坏现有 CSV。
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    out.to_csv(tmp_path, index=False)
+    os.replace(tmp_path, out_path)
+
+    print(f"\n已生成 {out_path}")
     print(f"总行数：{len(out)}，股票数：{out['symbol'].nunique()}")
     print(f"日期范围：{out['trade_date'].min()} ~ {out['trade_date'].max()}")
     print("各股票交易日数：")
     per = out.groupby("symbol")["trade_date"].count()
     for sym, cnt in per.items():
         print(f"  {sym}: {cnt}")
+    return out
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="抓取 10 支真实 A 股（AkShare 新浪源，前复权 qfq）写回 Sample Data"
+    )
+    parser.add_argument(
+        "--out", default=str(DEFAULT_OUT),
+        help="输出 CSV 路径（默认 data/sample/sample_daily.csv）",
+    )
+    parser.add_argument("--start", default=DEFAULT_START, help="起始交易日 YYYYMMDD（默认 20240102）")
+    parser.add_argument("--end", default=DEFAULT_END, help="结束交易日 YYYYMMDD（默认 20241231）")
+    args = parser.parse_args(argv)
+
+    build_sample(SYMBOLS, args.start, args.end, Path(args.out))
 
 
 if __name__ == "__main__":
