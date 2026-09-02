@@ -82,6 +82,14 @@ Streamlit 输入
 
 Agent 开始工作前必须阅读根目录 `AGENTS.md`。详细 Ownership、禁止修改范围、分支和交付规则见 `docs/role_boundaries.md`；架构说明见 `docs/architecture.md`。
 
+## 分工
+
+- Role 1（系统架构与集成）：`gitee用户名待填` —— Streamlit、Service Layer、集成测试与工程治理
+- Role 2（金融数据工程师）：葛玉娟 —— 数据获取、清洗、公共特征、数据存储与样例数据
+- Role 3（数据分析与可视化）：`gitee用户名待填` —— EDA、描述统计与可视化
+- Role 4（监督学习）：`gitee用户名待填` —— Decision Tree 分类与 Linear Regression
+- Role 5（无监督学习）：`gitee用户名待填` —— K-Means 聚类与风险收益画像
+
 ## GitHub 协作原则
 
 - 从 `main` 创建短生命周期功能分支，通过 Pull Request 合并。

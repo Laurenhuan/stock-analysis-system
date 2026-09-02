@@ -1,8 +1,13 @@
 """Normalize raw provider data into the shared Market Data Contract (Role 2).
 
 Turns raw Tushare ``pro_bar`` output into the 8 base columns, converting units
-(手→股, 千元→元), coercing types, sorting, de-duplicating, and rejecting
-conflicting duplicate ``(symbol, trade_date)`` records.
+(手→股, 千元→元) *only when the input is in provider-native units*, coercing
+types, sorting, de-duplicating, and rejecting conflicting duplicate
+``(symbol, trade_date)`` records.
+
+Unit conversion is driven by an explicit ``units`` argument (or safe detection),
+never by blindly multiplying a column name — so standard-format input (the
+Sample data, or an already-cleaned DataFrame) is never scaled again.
 """
 
 from __future__ import annotations
@@ -19,37 +24,56 @@ _THOUSAND_YUAN_TO_YUAN = 1000
 
 _NUMERIC_COLUMNS = ("open", "high", "low", "close", "volume", "amount")
 
+_VALID_UNITS = ("auto", "raw", "standard")
 
-def clean_market_data(raw: pd.DataFrame) -> pd.DataFrame:
+
+def clean_market_data(raw: pd.DataFrame, *, units: str = "auto") -> pd.DataFrame:
     """Normalize raw provider data into the base Market Data schema.
 
     Responsibilities:
     - Map provider columns (``ts_code`` → ``symbol``).
-    - Convert units to the contract's (``vol`` 手 → ``volume`` 股,
-      ``amount`` 千元 → 元).
+    - Convert units only for ``units="raw"`` (``vol`` 手 → ``volume`` 股 ×100,
+      ``amount`` 千元 → 元 ×1000). ``units="standard"`` performs no conversion;
+      ``units="auto"`` detects by the presence of ``vol`` vs ``volume``.
     - Coerce ``trade_date`` to timezone-naive ``datetime64[ns]`` and prices to
       numeric; drop rows whose date or numeric fields are missing/non-finite.
     - Sort by ``(symbol, trade_date)`` ascending.
     - Drop exact duplicates; raise on conflicting duplicates.
+    - Mark the result with ``df.attrs["_cleaned"] = True`` so re-processing is
+      idempotent.
+
+    Args:
+        raw: Provider-shaped or standard-shaped market DataFrame.
+        units: ``"auto"`` (default), ``"raw"``, or ``"standard"``.
 
     Raises:
         NoDataError: Input is empty, or nothing remains after cleaning.
-        DataValidationError: Required columns are missing, or duplicate
-            ``(symbol, trade_date)`` keys carry conflicting values.
+        DataValidationError: Required columns are missing, an unknown ``units``
+            value is given, or duplicate ``(symbol, trade_date)`` keys carry
+            conflicting values.
     """
     if raw is None or raw.empty:
         raise NoDataError("原始行情数据为空")
 
+    # Idempotency: an already-cleaned frame must not be scaled again.
+    if raw.attrs.get("_cleaned"):
+        return raw.copy()
+
+    if units not in _VALID_UNITS:
+        raise DataValidationError(f"units 必须是 {_VALID_UNITS} 之一，收到 {units!r}")
+
     df = raw.copy()
 
-    # 1) Provider column mapping.
+    # 1) Provider column mapping (no-op for standard-format input).
     df = df.rename(columns={"ts_code": "symbol"})
 
-    # 2) Unit conversion (Tushare native units → contract units).
-    if "vol" in df.columns and "volume" not in df.columns:
-        df["volume"] = pd.to_numeric(df["vol"], errors="coerce") * _LOT_TO_SHARES
-    if "amount" in df.columns:
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce") * _THOUSAND_YUAN_TO_YUAN
+    # 2) Unit conversion, driven by the explicit unit config (or detection).
+    input_units = units if units != "auto" else _detect_units(df)
+    if input_units == "raw":
+        if "vol" in df.columns and "volume" not in df.columns:
+            df["volume"] = pd.to_numeric(df["vol"], errors="coerce") * _LOT_TO_SHARES
+        if "amount" in df.columns:
+            df["amount"] = pd.to_numeric(df["amount"], errors="coerce") * _THOUSAND_YUAN_TO_YUAN
 
     # 3) Required columns must now all be present.
     missing = [c for c in BASE_MARKET_COLUMNS if c not in df.columns]
@@ -90,4 +114,12 @@ def clean_market_data(raw: pd.DataFrame) -> pd.DataFrame:
             f"{examples.head(5).to_dict('records')}"
         )
 
+    df.attrs["_cleaned"] = True
     return df
+
+
+def _detect_units(df: pd.DataFrame) -> str:
+    """Infer input units: raw Tushare has ``vol`` (手), standard has ``volume``."""
+    if "vol" in df.columns and "volume" not in df.columns:
+        return "raw"
+    return "standard"
