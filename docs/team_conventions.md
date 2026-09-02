@@ -52,5 +52,8 @@ Windows 本地统一命令：
 
 - Gitee `origin` 是主仓库，GitHub 仅为审核后镜像；不直接提交 `main`，不 force-push 已评审历史。
 - Review 修复继续推送原分支/原 PR，不新建重复 PR。共享文件和 Contract/数据政策变更按 `docs/role_boundaries.md` 请求所有受影响 Owner Review。
-- `daily/Dn.md` 只记已发生的 commit、测试和阻塞；未提交改动明确写“本地待提交”。
-- 每位成员只导出自己的 `prompts/Dn/` 记录，不代写他人记录，不提交 Token、Cookie、密码或个人身份数据。
+- 根目录 `README.md` 和 `todos.md` 由全组共用，不在成员学号目录中另建个人版本。
+- 每位成员只维护自己的 `daily/<学号>/Dn.md`，只记已发生的 commit、测试和阻塞；未提交改动明确写“本地待提交”。
+- 每位成员只导出自己的 `prompts/<学号>/Dn/<工具名>.txt`，不代写他人记录，不提交 Token、Cookie、密码或个人身份数据。
+- 每位成员的期末文档位于 `docs/<学号>/立项报告.md`、`docs/<学号>/调研报告.md` 和 `docs/<学号>/项目报告.md`。
+- 不猜测其他成员学号，不修改、搬运或补写其他成员的日报、提示词和期末文档。

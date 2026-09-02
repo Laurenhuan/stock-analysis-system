@@ -35,5 +35,5 @@
 - Role：Role 1 集成，消费 Role 2/3/5/6 的已合并公共接口。
 - 完成内容：统一 Market/EDA/Regression/Clustering Service；四个 Streamlit 页面改为只通过 `src.services` 调用 Domain；数据页切换为 Role 2 正式 Sample 链路；聚类页固定 `k=3`。
 - 真实状态：EDA、Linear Regression 和 K-Means 已接入；Decision Tree 尚未合并，未生成占位结果。
-- 质量保护：新增正式数据流、跨模块 Service 和依赖方向集成测试；完整结果见 `daily/D2.md`。
+- 质量保护：新增正式数据流、跨模块 Service 和依赖方向集成测试；Role 1 完整结果见 `daily/25151407/D2.md`。
 - 下一步：人工 Review 并由 Role 1 提交/推送当前本地改动；待 Role 4 交付后在同一 Service 边界接入分类。

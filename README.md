@@ -15,4 +15,4 @@ D2 已完成 Role 2 数据链路、Role 3 EDA/图表、Role 5 K-Means 和 Role 6
 - `a3556115538qqcom`：Role 5，Stock Profile、StandardScaler、K-Means 与聚类定位。
 - `lu2160`：Role 6，Linear Regression、MAE、R²、Actual vs Predicted 与算法 Review。
 
-需求进度见 `todos.md`，团队统一规范见 `docs/team_conventions.md`，日报见 `daily/`，AI 文本记录见 `prompts/`，课程报告见 `docs/`。
+`README.md` 和 `todos.md` 位于根目录并由全组共用。团队统一规范见 `docs/team_conventions.md`；每位成员的日报、AI 文本记录和三份课程报告分别归档到 `daily/<学号>/Dn.md`、`prompts/<学号>/Dn/<工具名>.txt` 和 `docs/<学号>/`。

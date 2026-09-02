@@ -56,7 +56,7 @@ git commit -m "feat(module): description"
 git push -u origin <assigned-feature-branch>
 ```
 
-当天未完成的模块也应形成真实、可解释的阶段提交并推送分支。每位成员同时提交自己的 `prompts/Dn/Gitee用户名-工具.txt`；Role 1 协调 `daily/Dn.md` 和 `todos.md`。
+当天未完成的模块也应形成真实、可解释的阶段提交并推送分支。每位成员同时维护自己的 `daily/<学号>/Dn.md`、`prompts/<学号>/Dn/<工具名>.txt` 和 `docs/<学号>/` 期末文档；Role 1 只协调根目录全组共用的 `README.md` 和 `todos.md`。不猜测学号，不代写他人材料。
 
 ## Gitee Pull Request
 
