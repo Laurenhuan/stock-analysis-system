@@ -9,5 +9,8 @@ matplotlib>=3.9,<4.0
 plotly>=5.24,<7.0
 python-dotenv>=1.0,<2.0
 
+# Data source (Role 2)
+tushare>=1.4,<2.0
+
 # Tests
 pytest>=8.0,<10.0
