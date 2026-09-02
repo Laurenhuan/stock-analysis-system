@@ -532,8 +532,7 @@ class TestEndToEnd:
 
         # 读取 Role 2 提供的样例数据
         sample_path = Path("data/sample/sample_daily.csv")
-        if not sample_path.exists():
-            pytest.skip("sample_daily.csv 不存在")
+        assert sample_path.exists(), "共享样例 data/sample/sample_daily.csv 不存在"
 
         raw = pd.read_csv(sample_path)
         # build_common_features 需要 symbol, trade_date, open, high, low, close, volume
@@ -546,15 +545,18 @@ class TestEndToEnd:
         # 传给 Role 5 的 build_stock_profiles
         profiles = build_stock_profiles(featured)
 
-        # 5 只股票应产生 5 个 Profile
-        assert len(profiles) == 5
+        # Profile 应覆盖 Role 2 当前共享样例中的全部股票，不写死数量。
+        expected_symbols = set(featured["symbol"].dropna().unique())
+        assert len(profiles) == len(expected_symbols)
+        assert set(profiles["symbol"]) == expected_symbols
         assert profiles["symbol"].is_unique
         assert tuple(profiles.columns[1:]) == FEATURE_COLS
 
         # 聚类
         result = run_clustering(profiles)
         assert set(result.keys()) == set(CLUSTERING_RESULT_KEYS)
-        assert len(result["profiles"]) == 5
+        assert len(result["profiles"]) == len(expected_symbols)
+        assert set(result["profiles"]["symbol"]) == expected_symbols
         assert result["profiles"]["cluster"].notna().all()
         assert result["profiles"]["cluster"].isin(range(N_CLUSTERS)).all()
 

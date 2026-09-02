@@ -101,6 +101,28 @@ def test_fetch_auto_falls_back_on_network_error(monkeypatch, no_token):
     assert df.attrs["is_sample"] is True
 
 
+def test_fetch_auto_records_fallback_reason(monkeypatch, no_token):
+    # 1) 权限/积分错误 → attrs 记录 Tushare 失败原因
+    def boom(*a, **k):
+        raise Exception("抱歉，您没有访问该接口的权限，积分不足")
+
+    monkeypatch.setattr("src.data.fetch._fetch_tushare", boom)
+    df = fetch_market_data("600519.SH", source="auto", token="fake-token")
+    assert df.attrs["data_source"] == "sample"
+    assert "积分" in df.attrs["fallback_reason"]
+
+    # 2) 无 token → 记录未配置 token
+    df2 = fetch_market_data("600519.SH", source="auto")
+    assert df2.attrs["data_source"] == "sample"
+    assert df2.attrs["fallback_reason"] == "未配置 TUSHARE_TOKEN"
+
+    # 3) Tushare 返回空 → 记录空数据
+    monkeypatch.setattr("src.data.fetch._fetch_tushare", lambda *a, **k: None)
+    df3 = fetch_market_data("600519.SH", source="auto", token="fake-token")
+    assert df3.attrs["data_source"] == "sample"
+    assert df3.attrs["fallback_reason"] == "Tushare 返回空数据"
+
+
 def test_fetch_auto_does_not_swallow_programming_error(monkeypatch, no_token):
     def boom(*a, **k):
         raise TypeError("unexpected internal bug")

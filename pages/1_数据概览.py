@@ -1,79 +1,70 @@
-"""Day 1 market overview page using temporary sample data."""
+"""Market overview page backed by the formal Service Layer."""
 
-import plotly.express as px
 import streamlit as st
 
-from src.services.market_service import (
-    get_demo_date_bounds,
-    get_demo_symbols,
-    get_market_overview,
+from src.services import (
+    build_price_figure,
+    get_market_metadata,
+    get_sample_date_bounds,
+    get_sample_symbols,
+    load_market_data,
 )
-from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoDataError
+from src.utils.exceptions import StockAnalysisError
 
 
-st.title("数据概览")
-st.caption("Day 1 Integration Prototype")
-st.warning(
-    "DEMO / SAMPLE ONLY：当前使用合成 Sample Data，"
-    "仅验证页面、Service、DataFrame 和图表链路。"
-)
+SOURCE_OPTIONS = {
+    "离线样例（推荐）": "sample",
+    "自动（Tushare 不可用时回退样例）": "auto",
+    "AkShare 在线行情": "akshare",
+}
 
-symbols = get_demo_symbols()
+st.set_page_config(page_title="数据概览", page_icon="📋", layout="wide")
+st.title("📋 数据概览")
+st.caption("数据流：Streamlit → Service → Role 2 获取/清洗/公共特征")
+
+symbols = get_sample_symbols()
+first_date, last_date = get_sample_date_bounds()
 
 with st.sidebar:
     st.header("查询条件")
+    source_label = st.selectbox("数据来源", options=list(SOURCE_OPTIONS))
     selected_symbol = st.selectbox("股票代码", options=symbols)
-    first_date, last_date = get_demo_date_bounds(selected_symbol)
-    start_date = st.date_input(
-        "开始日期",
-        value=first_date,
-        min_value=first_date,
-        max_value=last_date,
-    )
-    end_date = st.date_input(
-        "结束日期",
-        value=last_date,
-        min_value=first_date,
-        max_value=last_date,
-    )
-    load_data = st.button("加载 Sample Data", type="primary")
+    start_date = st.date_input("开始日期", value=first_date)
+    end_date = st.date_input("结束日期", value=last_date)
+    load_data = st.button("加载行情", type="primary")
 
 if not load_data:
-    st.info("请在左侧选择股票和日期，然后点击“加载 Sample Data”。")
+    st.info("请在左侧选择条件后点击“加载行情”。")
     st.stop()
 
 try:
-    overview = get_market_overview(
-        symbol=selected_symbol,
+    market_data = load_market_data(
+        selected_symbol,
         start_date=start_date,
         end_date=end_date,
+        source=SOURCE_OPTIONS[source_label],
     )
-except DataValidationError as error:
+    metadata = get_market_metadata(market_data)
+    price_figure = build_price_figure(market_data)
+except StockAnalysisError as error:
     st.error(str(error))
     st.stop()
-except InvalidSymbolError as error:
-    st.error(str(error))
-    st.stop()
-except NoDataError as error:
-    st.warning(str(error))
-    st.stop()
 
-st.subheader("Sample 行情数据")
-st.dataframe(overview, width="stretch", hide_index=True)
+if metadata["is_sample"]:
+    st.warning("当前为离线样例快照，不是实时行情。")
+else:
+    st.success(f"当前数据来源：{metadata['data_source']}")
+if metadata["fallback_reason"]:
+    st.caption(f"回退原因：{metadata['fallback_reason']}")
 
-st.subheader("基础收盘价图")
-# TEMPORARY / DAY-1 PROTOTYPE: Role 3 will replace this demo chart.
-price_figure = px.line(
-    overview,
-    x="trade_date",
-    y="close",
-    markers=True,
-    title=f"{selected_symbol} Sample Close Price",
-)
-price_figure.update_layout(xaxis_title="交易日期", yaxis_title="收盘价")
+left, middle, right = st.columns(3)
+left.metric("记录数", len(market_data))
+middle.metric("首个交易日", market_data["trade_date"].min().date().isoformat())
+right.metric("最后交易日", market_data["trade_date"].max().date().isoformat())
+
+st.subheader("标准行情与公共指标")
+st.dataframe(market_data, width="stretch", hide_index=True)
+
+st.subheader("收盘价与移动平均")
 st.plotly_chart(price_figure, width="stretch")
-
-st.caption(
-    "数据流：Streamlit 输入 → Market Service → Sample CSV → 日期/股票筛选 → "
-    "DataFrame → 表格与 Demo 图。"
-)
+st.caption("前 4/19 个交易日的 MA5/MA20 为空是滚动窗口的正常预热期。")

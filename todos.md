@@ -1,32 +1,39 @@
-# 项目待办清单 (Todos)
+# 项目需求与待办清单
 
-> 证券金融数据分析与可视化系统 —— 每日按实际完成情况更新勾选状态。
+> 每天按真实完成情况更新。只有代码、测试和页面均达到验收标准后才勾选。
 
-## 数据层（Role 2）
+## 工程与协作
 
-- [x] 数据获取 `fetch.py`（Tushare 前复权 + Sample 兜底 + source 参数）
-- [x] 数据清洗 `clean.py`（单位换算、排序、去重、冲突检测、幂等）
-- [x] 公共特征 `features.py`（return / ma5 / ma20 / volatility / volume_change / drawdown）
-- [x] Sample 样例数据（5 只 A 股 × 78 个真实交易日）
-- [x] 数据层单元测试（35 个，全部通过）
+- [x] R1 建立 Python、Streamlit、`src/`、`pages/`、`tests/` 工程骨架
+- [x] R2 冻结 Market Data、Supervised Learning、Clustering Contract v0.2
+- [x] R3 建立六人 Ownership、功能分支和 PR Review 边界
+- [x] R4 建立 Gitee 主仓库与 GitHub 备份镜像规则
+- [x] R5 建立根目录共用 `README.md` / `todos.md` 和按学号分隔的 `daily/`、`prompts/`、`docs/` 课程材料结构
 
-## 系统集成（Role 1）
+## 数据与分析
 
-- [ ] Streamlit 首页与页面骨架
-- [ ] Service Layer 接入数据层
-- [ ] 集成测试
+- [x] R6 实现 Sample Data Fallback，使无 Token、无网络时仍可运行
+- [x] R7 实现行情获取、清洗、标准字段和公共金融指标
+- [x] R8 为数据层补充字段、排序、唯一性、冲突和指标测试
+- [x] R9 完成 EDA、描述统计、缺失值检查和多股票比较
+- [x] R10 完成可复用 Plotly 行情、收益率、波动率和回撤图表
 
-## 数据分析与可视化（Role 3）
+## 算法
 
-- [ ] EDA 描述统计
-- [ ] 价格趋势图 / 收益率分布图 / 成交量图
+- [ ] R11 完成 Decision Tree 次日上涨/非上涨分类及 Accuracy、Confusion Matrix
+- [x] R12 完成 Linear Regression 次日收益率回归及 MAE、R²、Actual vs Predicted
+- [x] R13 完成 Stock Profile、StandardScaler、K-Means 与 Cluster 解释
+- [ ] R14 检查时间序列切分、未来信息泄漏、随机种子和可复现性（回归与聚类已覆盖，待 Role 4 分类合并后完成全面验收）
 
-## 监督学习（Role 4）
+## 应用与交付
 
-- [ ] Decision Tree 涨跌方向分类
-- [ ] Linear Regression 收益率预测
+- [x] R15 打通 Streamlit → Service → Sample DataFrame → 筛选 → 表格/价格图原型
+- [x] R16 将 Role 2 数据层替换接入正式数据概览页面
+- [ ] R17 将 Role 3/4/5/6 结果接入对应 Streamlit 页面（Role 3/5/6 已接入，Role 4 待合并）
+- [ ] R18 完成六人模块集成测试、异常提示和演示数据检查（已覆盖 Role 2/3/5/6 与页面边界，待 Role 4）
+- [ ] R19 完成调研报告、项目报告、演示材料和最终回归测试
 
-## 无监督学习（Role 5）
+## D2 集成验收记录（Role 5）
 
 - [x] `build_stock_profiles()` 使用 Role 2 的 return 列（D2 完成）
 - [x] `run_clustering()` 加强输入校验（D2 完成）

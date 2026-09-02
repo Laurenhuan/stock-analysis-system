@@ -1,7 +1,7 @@
 # Agent Working Agreement
 
-Every coding agent must read this file and `docs/role_boundaries.md` before
-changing code in this repository.
+Every coding agent must read this file, `docs/role_boundaries.md` and
+`docs/team_conventions.md` before changing code in this repository.
 
 ## Architecture direction
 
@@ -54,14 +54,36 @@ approved `INTERFACE / DATA POLICY CHANGE REQUEST` before implementation.
 
 ## Git and review rules
 
-- Start from the central repository's current `main`.
-- Role 2-6 work on the assigned feature branch in their personal fork.
-- Never commit directly to central `main` and never force-push reviewed history.
+- Gitee `origin` (`sp1-2026/25151407`) is the primary course repository.
+- GitHub `github` is a backup mirror; do not develop independent commits on
+  both platforms.
+- Start from Gitee's current `main` and push the assigned feature branch to the
+  central Gitee repository.
+- Never commit directly to `main` and never force-push reviewed history.
 - Do not reset, overwrite or delete unrelated work.
 - Run module tests and the complete test suite before requesting Review.
 - Push Review fixes to the existing PR branch; do not open a duplicate PR.
-- `Ready to merge` means only that GitHub found no conflict. Human Review,
+- `Ready to merge` means only that Gitee found no conflict. Human Review,
   Contract/Ownership checks and exact tests are still required.
 
+## Course process records
+
+- Before 24:00, every contributor pushes that day's commits and feature branch
+  to Gitee.
+- Root `README.md` and `todos.md` are shared by the whole team and coordinated
+  by Role 1; progress must match actual commits and tests.
+- Every contributor writes only their own daily report at
+  `daily/<student_id>/Dn.md`. Never guess another member's student ID or write
+  another member's report.
+- Every contributor adds their own plain-text AI record at
+  `prompts/<student_id>/Dn/<tool>.txt`. Do not fabricate another member's
+  record.
+- Never commit passwords, tokens, cookies or personal identity data in prompt
+  exports.
+- Each contributor's course reports belong at
+  `docs/<student_id>/立项报告.md`, `docs/<student_id>/调研报告.md` and
+  `docs/<student_id>/项目报告.md`; images belong in `docs/assets/`.
+
 Detailed boundaries, branch names, handoff requirements and the Review matrix
-are authoritative in `docs/role_boundaries.md`.
+are authoritative in `docs/role_boundaries.md`. Daily repository operations
+are defined in `docs/course_submission.md` and `docs/github_workflow.md`.
