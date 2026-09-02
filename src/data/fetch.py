@@ -8,6 +8,8 @@ Data-source semantics (``source`` parameter):
 
 - ``"sample"``  : read local sample only; never touch the network.
 - ``"tushare"`` : require Tushare; raise on any provider failure (no fallback).
+- ``"akshare"`` : require AkShare (``stock_zh_a_hist``, 前复权 ``qfq``); raise on
+                  any provider failure (no fallback).
 - ``"auto"``    : try Tushare when a token is present, else fall back to the
                   local sample. Falls back only on clearly-identified
                   permission / points / network errors; programming errors,
@@ -17,7 +19,7 @@ Data-source semantics (``source`` parameter):
 The returned DataFrame carries provenance in ``df.attrs`` so the Service layer
 can tell the data origin without extra columns:
 
-- ``df.attrs["data_source"]`` -> ``"sample"`` | ``"tushare"``
+- ``df.attrs["data_source"]`` -> ``"sample"`` | ``"tushare"`` | ``"akshare"``
 - ``df.attrs["is_sample"]``   -> ``True`` | ``False``
 """
 
@@ -32,6 +34,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from src.contracts.market_data import BASE_MARKET_COLUMNS
 from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoDataError
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,7 @@ _SAMPLE_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "sample" / "sample_daily.csv"
 )
 
-_VALID_SOURCES = ("sample", "tushare", "auto")
+_VALID_SOURCES = ("sample", "tushare", "akshare", "auto")
 
 # Tushare error-message fragments that indicate a quota / permission / points
 # problem (safe to fall back from in "auto" mode).
@@ -53,6 +56,20 @@ _FALLBACK_HINTS = (
 )
 
 _NETWORK_HINTS = ("connection", "reset", "timeout", "refused", "recv", "network")
+
+# AkShare ``stock_zh_a_hist`` 输出为中文列名；成交量单位为“手”（1 手 = 100 股），
+# 成交额单位已经是“元”。列名映射、.SH/.SZ 补全与成交量换算在此完成，返回标准 Schema。
+_AKSHARE_COLUMN_MAP = {
+    "日期": "trade_date",
+    "股票代码": "symbol",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+}
+_AKSHARE_LOT_TO_SHARES = 100
 
 
 def fetch_market_data(
@@ -72,7 +89,7 @@ def fetch_market_data(
             ``"YYYYMMDD"``/``"YYYY-MM-DD"``.
         end_date: Inclusive end, same formats.
         token: Tushare token; defaults to ``TUSHARE_TOKEN`` from the environment.
-        source: ``"sample"`` | ``"tushare"`` | ``"auto"`` (default).
+        source: ``"sample"`` | ``"tushare"`` | ``"akshare"`` | ``"auto"`` (default).
         fallback: Only used with ``source="auto"``. When False, a failed or empty
             Tushare request raises instead of falling back to sample.
 
@@ -101,6 +118,9 @@ def fetch_market_data(
 
     if source == "tushare":
         return _fetch_tushare_strict(symbols, start, end, token)
+
+    if source == "akshare":
+        return _fetch_akshare_strict(symbols, start, end)
 
     # source == "auto"
     if token:
@@ -177,6 +197,63 @@ def _fetch_tushare_strict(symbols: list[str], start: str, end: str, token: str |
     if df is None or df.empty:
         raise NoDataError(f"Tushare 未返回 {symbols} 在指定区间内的数据")
     return _mark_source(df, "tushare")
+
+
+def _fetch_akshare(symbols: list[str], start: str, end: str) -> pd.DataFrame | None:
+    """Fetch daily history via AkShare ``stock_zh_a_hist`` (前复权 ``qfq``).
+
+    Returns contract-shaped data (``symbol`` 带 .SH/.SZ 后缀、``volume`` 股、
+    ``amount`` 元)：中文列名映射、后缀补全与成交量单位换算都发生在这里。
+    """
+    import akshare as ak
+
+    frames = []
+    for symbol in symbols:
+        code = symbol[:6]  # AkShare API 只接受 6 位代码，不带交易所后缀
+        kwargs = {"symbol": code, "period": "daily", "adjust": "qfq"}
+        if start:
+            kwargs["start_date"] = start
+        if end:
+            kwargs["end_date"] = end
+        raw = ak.stock_zh_a_hist(**kwargs)
+        if raw is None or raw.empty:
+            continue
+        frames.append(_convert_akshare(raw))
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+
+def _convert_akshare(raw: pd.DataFrame) -> pd.DataFrame:
+    """AkShare 输出 → 标准 Schema：中文列名→英文、补 .SH/.SZ、成交量 手→股 ×100。"""
+    df = raw.rename(columns=_AKSHARE_COLUMN_MAP)
+    df = df[list(BASE_MARKET_COLUMNS)].copy()
+    df["symbol"] = df["symbol"].map(_symbol_with_exchange)
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce") * _AKSHARE_LOT_TO_SHARES
+    return df
+
+
+def _symbol_with_exchange(code: str) -> str:
+    """裸 6 位代码 → 契约后缀形式：6 开头 ``.SH``，0/3 开头 ``.SZ``。"""
+    code = str(code).strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise InvalidSymbolError(f"无效股票代码：{code!r}")
+    if code[0] == "6":
+        return f"{code}.SH"
+    if code[0] in ("0", "3"):
+        return f"{code}.SZ"
+    raise InvalidSymbolError(f"不支持的交易所代码：{code!r}（仅支持沪 6 开头 / 深 0、3 开头）")
+
+
+def _fetch_akshare_strict(symbols: list[str], start: str, end: str) -> pd.DataFrame:
+    """``source="akshare"``: 不回退；失败时抛出清晰错误。"""
+    try:
+        df = _fetch_akshare(symbols, start, end)
+    except Exception as exc:  # noqa: BLE001
+        raise NoDataError(f"AkShare 获取失败：{exc}") from exc
+    if df is None or df.empty:
+        raise NoDataError(f"AkShare 未返回 {symbols} 在指定区间内的数据")
+    return _mark_source(df, "akshare")
 
 
 def _load_sample(symbols: list[str], start: str, end: str) -> pd.DataFrame:

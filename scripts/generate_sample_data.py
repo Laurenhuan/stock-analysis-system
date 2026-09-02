@@ -8,6 +8,9 @@ Contract format:
 The data is **synthetic** (seeded random walk), NOT real quotes. It exists so
 Roles 3-5 can develop EDA / clustering against a realistic multi-stock pool
 without a Tushare token, points, or network. Reproducible via the fixed seed.
+
+真实样例改用 ``scripts/fetch_akshare_sample.py``（AkShare，10 支真实 A 股，前复权 qfq）；
+本脚本保留用于合成 / 离线演示场景。
 """
 
 from __future__ import annotations

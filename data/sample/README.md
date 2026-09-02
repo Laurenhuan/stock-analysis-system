@@ -14,6 +14,22 @@
 
 生成脚本见 `scripts/generate_sample_data.py`（固定随机种子，可复现）。
 
+## 真实数据（AkShare）
+
+新增 `scripts/fetch_akshare_sample.py`，用 AkShare `stock_zh_a_hist`（前复权 `qfq`）抓取
+**10 支真实 A 股**并写回 `sample_daily.csv`，供无 Token 场景用真实行情演示：
+
+```bash
+python scripts/fetch_akshare_sample.py
+```
+
+- 10 支：600519.SH 贵州茅台、000001.SZ 平安银行、300750.SZ 宁德时代、601318.SH 中国平安、
+  000858.SZ 五粮液、600276.SH 恒瑞医药、000333.SZ 美的集团、002594.SZ 比亚迪、
+  601899.SH 紫金矿业、000725.SZ 京东方A（沪深两市、行业分散）。
+- 日期范围 2024-01-02 ~ 2024-12-31（约 242 个交易日）。
+- 成交量「手」×100 换算为「股」；成交额已是「元」，不做换算。
+- 抓取需联网，脚本内置重试。运行成功后 `sample_daily.csv` 即替换为真实样例。
+
 ## Composition（板块分布）
 
 | Board | 数量 | 代码段 |

@@ -11,6 +11,7 @@ python-dotenv>=1.0,<2.0
 
 # Data source (Role 2)
 tushare>=1.4,<2.0
+akshare>=1.14,<2.0
 
 # Tests
 pytest>=8.0,<10.0
