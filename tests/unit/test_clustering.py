@@ -382,3 +382,45 @@ class TestEndToEnd:
 
         assert result["profiles"]["cluster"].notna().all()
         assert result["profiles"]["cluster"].isin(range(N_CLUSTERS)).all()
+
+
+class TestTenStocks:
+    """10 只股票聚类测试 — 符合 Role 2 共享数据要求。"""
+
+    def test_ten_stocks_all_clustered(self) -> None:
+        """10 只股票必须全部进入聚类，输出包含 symbol 和 cluster。"""
+        symbols = [
+            "000001.SZ", "000002.SZ", "000858.SZ", "002415.SZ", "300750.SZ",
+            "600519.SH", "600036.SH", "601318.SH", "601888.SH", "601088.SH",
+        ]
+        market_df = _make_market_data(symbols=symbols, n_days=250)
+        profiles = build_stock_profiles(market_df)
+
+        # 恰好 10 行，一行一只股票
+        assert len(profiles) == 10
+        assert profiles["symbol"].is_unique
+
+        result = run_clustering(profiles)
+
+        # 10 只股票全部进入聚类
+        assert len(result["profiles"]) == 10
+        assert result["profiles"]["cluster"].notna().all()
+        assert result["profiles"]["cluster"].isin(range(N_CLUSTERS)).all()
+
+        # 输出包含 symbol 和 cluster
+        assert "symbol" in result["profiles"].columns
+        assert "cluster" in result["profiles"].columns
+
+    def test_ten_stocks_reproducible(self) -> None:
+        """10 只股票，相同 random_state 结果完全一致。"""
+        symbols = [f"STK{i:04d}" for i in range(10)]
+        market_df = _make_market_data(symbols=symbols, n_days=250)
+        profiles = build_stock_profiles(market_df)
+
+        result1 = run_clustering(profiles, random_state=42)
+        result2 = run_clustering(profiles, random_state=42)
+
+        pd.testing.assert_frame_equal(result1["profiles"], result2["profiles"])
+        pd.testing.assert_frame_equal(
+            result1["cluster_centers"], result2["cluster_centers"]
+        )
