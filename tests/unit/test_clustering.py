@@ -1,8 +1,8 @@
 """Role 5 聚类模块单元测试。
 
-覆盖场景：
-1. build_stock_profiles — 正常输入、缺少列、空 DataFrame、NaN 值
-2. run_clustering — 正常输入、输出 shape、可复现性、股票不足
+覆盖：
+1. build_stock_profiles — 正常输入、缺少列、空 DataFrame、NaN 值、数据不足
+2. run_clustering — 正常输入、输出 shape、可复现性、股票不足、symbol 重复、NaN/inf
 3. 端到端 — 从原始行情到 ClusteringResult 的完整链路
 """
 
@@ -44,12 +44,9 @@ def _make_market_data(
 
     rows = []
     for sym in symbols:
-        # 生成随机价格：起始价 10~100，每日涨跌幅 ~N(0, 0.02)
         start_price = rng.uniform(10, 100)
         returns = rng.normal(0.001, 0.02, size=n_days)
         prices = start_price * np.cumprod(1 + returns)
-
-        # drawdown：从区间内最高点算起的回撤
         running_max = np.maximum.accumulate(prices)
         drawdowns = (prices - running_max) / running_max
 
@@ -80,6 +77,64 @@ class TestBuildStockProfiles:
         assert len(profiles) == 5
         assert list(profiles.columns) == ["symbol", *FEATURE_COLS]
 
+    def test_features_match_contract(self) -> None:
+        """特征列必须与 PROFILE_FEATURES 一致。"""
+        from src.contracts.clustering import PROFILE_FEATURES
+
+        df = _make_market_data()
+        profiles = build_stock_profiles(df)
+
+        assert tuple(profiles.columns[1:]) == PROFILE_FEATURES
+
+    def test_mean_return_is_arithmetic_mean(self) -> None:
+        """mean_return 是简单日收益率的算术平均。"""
+        df = pd.DataFrame(
+            {
+                "symbol": ["X", "X", "X"],
+                "trade_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03"]
+                ),
+                "close": [100.0, 110.0, 100.0],
+                "drawdown": [0.0, 0.0, -0.090909],
+            }
+        )
+        profiles = build_stock_profiles(df)
+        expected_mean = (0.1 + (100 / 110 - 1)) / 2
+        assert abs(profiles.loc[0, "mean_return"] - expected_mean) < 1e-10
+
+    def test_volatility_uses_ddof1(self) -> None:
+        """volatility 使用 ddof=1 的样本标准差。"""
+        df = pd.DataFrame(
+            {
+                "symbol": ["X"] * 4,
+                "trade_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+                ),
+                "close": [100.0, 105.0, 103.0, 108.0],
+                "drawdown": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
+        profiles = build_stock_profiles(df)
+
+        returns = pd.Series([105 / 100 - 1, 103 / 105 - 1, 108 / 103 - 1])
+        expected_std = returns.std(ddof=1)
+        assert abs(profiles.loc[0, "volatility"] - expected_std) < 1e-10
+
+    def test_max_drawdown_is_min_of_drawdown(self) -> None:
+        """max_drawdown 是 drawdown 列的最小值。"""
+        df = pd.DataFrame(
+            {
+                "symbol": ["X", "X", "X"],
+                "trade_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03"]
+                ),
+                "close": [100.0, 90.0, 95.0],
+                "drawdown": [0.0, -0.1, -0.05],
+            }
+        )
+        profiles = build_stock_profiles(df)
+        assert profiles.loc[0, "max_drawdown"] == -0.1
+
     def test_no_nan_in_output(self) -> None:
         """输出的3个特征列不应有 NaN。"""
         df = _make_market_data()
@@ -95,19 +150,6 @@ class TestBuildStockProfiles:
 
         assert profiles["symbol"].is_unique
 
-    def test_missing_column_raises_error(self) -> None:
-        """缺少必要列应抛出 DataValidationError。"""
-        df = pd.DataFrame({"symbol": ["A"], "close": [10.0]})
-        # 缺少 drawdown 和 trade_date
-        with pytest.raises(DataValidationError):
-            build_stock_profiles(df)
-
-    def test_empty_dataframe_raises_error(self) -> None:
-        """空 DataFrame 应抛出 DataValidationError。"""
-        df = pd.DataFrame(columns=["symbol", "trade_date", "close", "drawdown"])
-        with pytest.raises(DataValidationError):
-            build_stock_profiles(df)
-
     def test_values_are_finite(self) -> None:
         """输出的特征值必须是有限数值（非 inf / -inf）。"""
         df = _make_market_data()
@@ -115,6 +157,58 @@ class TestBuildStockProfiles:
 
         for col in FEATURE_COLS:
             assert np.isfinite(profiles[col]).all(), f"{col} 含有非有限值"
+
+    def test_missing_symbol_column_raises_error(self) -> None:
+        """缺少 symbol 列应抛出 DataValidationError。"""
+        df = pd.DataFrame(
+            {"trade_date": [1], "close": [10.0], "drawdown": [0.0]}
+        )
+        with pytest.raises(DataValidationError):
+            build_stock_profiles(df)
+
+    def test_missing_trade_date_column_raises_error(self) -> None:
+        """缺少 trade_date 列应抛出 DataValidationError。"""
+        df = pd.DataFrame(
+            {"symbol": ["A"], "close": [10.0], "drawdown": [0.0]}
+        )
+        with pytest.raises(DataValidationError):
+            build_stock_profiles(df)
+
+    def test_empty_dataframe_raises_error(self) -> None:
+        """空 DataFrame 应抛出 DataValidationError。"""
+        df = pd.DataFrame(
+            columns=["symbol", "trade_date", "close", "drawdown"]
+        )
+        with pytest.raises(DataValidationError):
+            build_stock_profiles(df)
+
+    def test_too_few_days_per_stock_raises_error(self) -> None:
+        """每只股票数据不足 3 天应抛出 DataValidationError。"""
+        df = pd.DataFrame(
+            {
+                "symbol": ["A", "A"],
+                "trade_date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                "close": [100.0, 105.0],
+                "drawdown": [0.0, 0.0],
+            }
+        )
+        with pytest.raises(DataValidationError, match="数据不足"):
+            build_stock_profiles(df)
+
+    def test_null_symbol_in_input_raises_error(self) -> None:
+        """输入中存在空 symbol 应抛出 DataValidationError。"""
+        df = pd.DataFrame(
+            {
+                "symbol": ["A", None, "C"],
+                "trade_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03"]
+                ),
+                "close": [100.0, 105.0, 110.0],
+                "drawdown": [0.0, 0.0, 0.0],
+            }
+        )
+        with pytest.raises(DataValidationError, match="空的 symbol"):
+            build_stock_profiles(df)
 
 
 # ── run_clustering 测试 ───────────────────────────────
@@ -181,12 +275,10 @@ class TestRunClustering:
         result1 = run_clustering(sample_profiles, random_state=0)
         result2 = run_clustering(sample_profiles, random_state=999)
 
-        # 只验证不报错，不强制要求结果不同
         assert len(result1["profiles"]) == len(result2["profiles"])
 
     def test_too_few_stocks_raises_error(self) -> None:
         """股票数 < k 应抛出 InsufficientDataError。"""
-        # 只有2只股票，但 k=3
         tiny = pd.DataFrame(
             {
                 "symbol": ["A", "B"],
@@ -198,13 +290,51 @@ class TestRunClustering:
         with pytest.raises(InsufficientDataError):
             run_clustering(tiny)
 
+    def test_duplicate_symbol_raises_error(self) -> None:
+        """Profile 中存在重复 symbol 应抛出 DataValidationError。"""
+        dupes = pd.DataFrame(
+            {
+                "symbol": ["A", "A", "B", "C", "D"],
+                "mean_return": [0.01, 0.02, 0.03, 0.04, 0.05],
+                "volatility": [0.02, 0.03, 0.04, 0.05, 0.06],
+                "max_drawdown": [-0.05, -0.10, -0.15, -0.20, -0.25],
+            }
+        )
+        with pytest.raises(DataValidationError, match="重复 symbol"):
+            run_clustering(dupes)
+
+    def test_nan_in_profiles_raises_error(self) -> None:
+        """Profile 中存在 NaN 应抛出 DataValidationError。"""
+        nan_profiles = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C", "D", "E"],
+                "mean_return": [0.01, float("nan"), 0.03, 0.04, 0.05],
+                "volatility": [0.02, 0.03, 0.04, 0.05, 0.06],
+                "max_drawdown": [-0.05, -0.10, -0.15, -0.20, -0.25],
+            }
+        )
+        with pytest.raises(DataValidationError, match="NaN"):
+            run_clustering(nan_profiles)
+
+    def test_inf_in_profiles_raises_error(self) -> None:
+        """Profile 中存在 inf 应抛出 DataValidationError。"""
+        inf_profiles = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C", "D", "E"],
+                "mean_return": [0.01, float("inf"), 0.03, 0.04, 0.05],
+                "volatility": [0.02, 0.03, 0.04, 0.05, 0.06],
+                "max_drawdown": [-0.05, -0.10, -0.15, -0.20, -0.25],
+            }
+        )
+        with pytest.raises(DataValidationError, match="非有限值"):
+            run_clustering(inf_profiles)
+
     def test_missing_column_raises_error(self) -> None:
         """Profile 缺少必要列应抛出 DataValidationError。"""
         bad = pd.DataFrame(
             {
                 "symbol": ["A", "B", "C"],
                 "mean_return": [0.01, 0.02, 0.03],
-                # 缺少 volatility 和 max_drawdown
             }
         )
         with pytest.raises(DataValidationError):
@@ -219,28 +349,22 @@ class TestEndToEnd:
 
     def test_full_pipeline(self) -> None:
         """完整流程：行情 → Profile → 聚类 → Contract 结果。"""
-        # 1. 模拟行情数据（5只股票，60天）
         market_df = _make_market_data(
             symbols=["SH600000", "SH600036", "SH601318", "SZ000001", "SZ002415"],
             n_days=60,
         )
 
-        # 2. 构建 Profile Table
         profiles = build_stock_profiles(market_df)
         assert len(profiles) == 5
 
-        # 3. 聚类
         result = run_clustering(profiles)
 
-        # 4. 验证 Contract 完整性
         assert set(result.keys()) == set(CLUSTERING_RESULT_KEYS)
         assert len(result["profiles"]) == 5
         assert len(result["cluster_centers"]) == N_CLUSTERS
         assert result["features"] == FEATURE_COLS
         assert result["k"] == N_CLUSTERS
 
-        # 5. 验证 cluster_centers 的数值在原始尺度的合理范围内
-        # 中心点是组内均值，不应超出整体数据的 min/max 范围太多
         for col in FEATURE_COLS:
             center_min = result["cluster_centers"][col].min()
             center_max = result["cluster_centers"][col].max()
