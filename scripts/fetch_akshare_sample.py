@@ -5,10 +5,12 @@ Contract format:
 
     symbol, trade_date, open, high, low, close, volume, amount
 
-Data is **real** daily history (前复权 qfq) from AkShare ``stock_zh_a_hist``,
-so Roles 3-5 can develop EDA / clustering / classification / regression against
-real quotes without a Tushare token. Run this manually when the network is
-available; the committed CSV is what the offline fallback reads.
+Data is **real** daily history (前复权 qfq)。样例抓取走 AkShare 新浪源
+``stock_zh_a_daily``（Provider 代码 ``source="akshare"`` 走 eastmoney
+``stock_zh_a_hist``，但 eastmoney 历史端点在本机被网络劫持不可达，故改用同属
+AkShare 的新浪源；两源输出同为真实前复权日线，字段与单位一致）。Roles 3-5 可据此
+做 EDA / 聚类 / 分类 / 回归联调，无需 Tushare Token。联网时运行一次，
+``data/sample/sample_daily.csv`` 即替换为真实样例，供离线回退读取。
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
+from src.contracts.market_data import BASE_MARKET_COLUMNS
 from src.data.clean import clean_market_data
-from src.data.fetch import fetch_market_data
 from src.utils.exceptions import NoDataError
 
 # 10 支真实 A 股：沪深两市、行业有差异、2024 全年连续交易的大盘蓝筹。
@@ -46,12 +48,36 @@ END = "20241231"
 OUT_PATH = Path(__file__).resolve().parents[1] / "data" / "sample" / "sample_daily.csv"
 
 
+def _sina_symbol(symbol: str) -> str:
+    """契约后缀形式 → 新浪接口的 ``sh/sz`` 前缀形式。"""
+    code, suffix = symbol.split(".")
+    return ("sh" if suffix == "SH" else "sz") + code
+
+
+def _fetch_sina(symbol: str) -> pd.DataFrame:
+    """抓取单只股票：AkShare 新浪源 ``stock_zh_a_daily``（前复权 qfq）。
+
+    新浪源 ``volume`` 已是「股」、``amount`` 已是「元」，直接映射为标准 8 字段，
+    无需像 eastmoney 那样再做 手→股 换算。
+    """
+    import akshare as ak
+
+    raw = ak.stock_zh_a_daily(
+        symbol=_sina_symbol(symbol), start_date=START, end_date=END, adjust="qfq"
+    )
+    if raw is None or raw.empty:
+        raise NoDataError(f"新浪源未返回 {symbol} 在指定区间内的数据")
+    df = raw.rename(columns={"date": "trade_date"})
+    df["symbol"] = symbol
+    return df[list(BASE_MARKET_COLUMNS)].copy()
+
+
 def fetch_one(symbol: str, retries: int = 3, delay: float = 2.0) -> pd.DataFrame:
-    """Fetch one symbol via AkShare with retries (the public endpoint is flaky)."""
+    """抓取单只股票，带重试（新浪公开端点偶发抖动）。"""
     for attempt in range(1, retries + 1):
         try:
-            return fetch_market_data(symbol, start_date=START, end_date=END, source="akshare")
-        except NoDataError as exc:
+            return _fetch_sina(symbol)
+        except Exception as exc:  # noqa: BLE001 网络异常也重试
             if attempt == retries:
                 raise
             print(f"  [重试 {attempt}/{retries}] {symbol} 失败：{exc}")
@@ -93,6 +119,8 @@ def main() -> None:
 
     # Sample CSV 里 trade_date 存成 "YYYYMMDD" 字符串，与 fetch 的字符串区间过滤一致。
     out["trade_date"] = out["trade_date"].dt.strftime("%Y%m%d")
+    # 成交量是离散「股」，取整；成交额是「元」，保留小数。
+    out["volume"] = out["volume"].round().astype("int64")
     out.to_csv(OUT_PATH, index=False)
 
     print(f"\n已生成 {OUT_PATH}")
