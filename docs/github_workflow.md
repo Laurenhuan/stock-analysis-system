@@ -1,60 +1,40 @@
 # GitHub Collaboration Workflow
 
-This is the minimum collaboration process for the five-person team. It deliberately avoids complex DevOps.
+This is the minimum collaboration process for the six-person team. It deliberately avoids complex DevOps.
 
-## Repository setup status
+## Repository topology
 
-The local repository is ready, but the GitHub remote must be created or connected before the first team clone. The repository must be **Private** unless the project owner explicitly decides otherwise.
+The central repository is owned and integrated by Role 1. Role 2-6 develop in personal forks and open Pull Requests back to central `main`.
 
-## Maintainer: first remote setup
-
-Preferred path after GitHub CLI is installed:
-
-```bash
-gh auth login
-cd D:\Codex工作空间\stock-analysis-system
-gh repo create stock-analysis-system --private --source=. --remote=origin
-git push -u origin main
-git push -u origin docs/contracts-v02
-git push -u origin chore/github-collaboration
+```text
+central: Laurenhuan/stock-analysis-system
+    ↑ Pull Request
+personal fork / feature branch
 ```
 
-Do not add `--public`, do not use `--force`, and verify the destination account before creating the repository.
+Role 1 may use the central repository as `origin` but still develops on a feature branch and opens a same-repository PR. Nobody develops directly on central `main`.
 
-Without GitHub CLI, create an empty Private repository named `stock-analysis-system` in the GitHub UI, then run:
-
-```bash
-git remote add origin <private-repository-url>
-git push -u origin main
-git push -u origin docs/contracts-v02
-git push -u origin chore/github-collaboration
-```
-
-## Required Pull Request order
-
-1. Open `docs/contracts-v02` → `main` using `docs/pull_requests/contracts-v02.md`.
-2. Review and merge it with a normal merge after checks pass.
-3. Open `chore/github-collaboration` → `main` using `docs/pull_requests/github-collaboration.md`.
-4. Review and merge it.
-
-The collaboration branch is stacked on the approved Contract commit. Merge the Contract PR first so the second PR contains only collaboration infrastructure.
-
-## Every member: first time
+## Role 2-6: first-time fork setup
 
 ```bash
-git clone <private-repository-url>
+git clone <personal-fork-url>
 cd stock-analysis-system
+git remote add upstream <central-repository-url>
+git remote -v
 ```
+
+`origin` must be the contributor's fork. `upstream` must be the central repository. Do not guess either URL; verify both before pushing.
 
 ## Start each task
 
 ```bash
 git checkout main
-git pull origin main
-git checkout -b feat/xxx
+git fetch upstream
+git merge --ff-only upstream/main
+git checkout -b <assigned-feature-branch>
 ```
 
-Use the branch recorded in the relevant Issue when one is provided.
+Use the branch recorded in `docs/role_boundaries.md` and the relevant Issue. If local work prevents a fast-forward update, stop and inspect instead of resetting or discarding changes.
 
 ## Finish development
 
@@ -73,6 +53,10 @@ Pull Request → Human Review → Merge
 ```
 
 Complete the PR template, include exact test results, and request Review from the path owner listed in `docs/code_ownership.md`.
+
+The PR base is central `main`; the compare branch is the contributor fork's assigned feature branch. Review fixes are pushed as normal new commits to the same branch and automatically update the existing PR. Do not open a duplicate PR and do not force-push reviewed history.
+
+Before approval, Reviewers must inspect `Files changed`, verify Ownership and Contract boundaries, and confirm the complete test command. GitHub's `Ready to merge` status means only that no merge conflict was detected.
 
 ## Main branch protection
 
@@ -96,4 +80,6 @@ Do not enable broad enterprise restrictions unless the team later needs them. Ve
 - Do not run `git push --force`.
 - Do not run `git reset --hard` when the impact is not fully understood.
 - Do not silently modify another Role's Contract or business logic.
+- Do not implement Streamlit or Service code outside Role 1 unless a cross-role change is explicitly coordinated.
+- Do not modify another algorithm owner's module merely because Role 6 provided a Review.
 - Do not commit `.env`, tokens, credentials, caches, or raw/processed datasets.

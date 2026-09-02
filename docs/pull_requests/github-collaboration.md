@@ -1,5 +1,7 @@
 # Pull Request Draft — GitHub Collaboration Baseline
 
+> Historical record from the former five-role baseline. For current assignments, read `AGENTS.md` and `docs/role_boundaries.md`.
+
 - Base: `main`
 - Head: `chore/github-collaboration`
 - Title: `chore(github): establish collaboration workflow`

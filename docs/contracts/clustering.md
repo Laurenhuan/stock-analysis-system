@@ -2,7 +2,7 @@
 
 **Contract Status: Review Candidate v0.2**
 
-**Owner: Role 5（由 Role 1 协调，需 Role 2、3 Review）**
+**Owner: Role 5（由 Role 1 协调，需 Role 2、3 Review，并由 Role 6 进行算法/复现性 Review）**
 
 ## 1. Scope and algorithm
 

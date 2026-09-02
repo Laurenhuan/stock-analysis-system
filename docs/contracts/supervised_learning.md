@@ -2,7 +2,7 @@
 
 **Contract Status: Review Candidate v0.2**
 
-**Owner: Role 4（由 Role 1 协调，需数据与展示消费者 Review）**
+**Owners: Role 4（Classification）、Role 6（Regression）；由 Role 1 协调，需数据与展示消费者 Review**
 
 ## 1. Shared research frame
 
@@ -31,6 +31,8 @@ X(t) → y(t+1)
 禁止随机打乱或使用 `shuffle=True`。训练集或测试集为空、分类训练集不足以形成有效模型、回归测试集不足以计算要求指标时，应抛出 `InsufficientDataError`。
 
 ## 3. Classification
+
+**Implementation Owner: Role 4. Algorithm/leakage Reviewer: Role 6.**
 
 ### Research question and model
 
@@ -75,6 +77,8 @@ y_pred
 其中 `y_true`、`y_pred` 只能取 0 或 1。
 
 ## 4. Regression
+
+**Implementation Owner: Role 6. Temporal-split consistency Reviewer: Role 4.**
 
 ### Research question and model
 
@@ -121,4 +125,6 @@ P0 推荐 `TypedDict + pandas.DataFrame`，定义在 `src/contracts/supervised.p
 
 - `DataValidationError`：字段、日期顺序、非有限值或目标对齐不满足 Contract。
 - `InsufficientDataError`：处理 NaN 和下一日目标后没有足够训练/测试样本。
-- Owner：Role 4；Service Layer 负责转换为 UI 可理解状态。
+- Classification exceptions Owner：Role 4。
+- Regression exceptions Owner：Role 6。
+- Service Layer Owner：Role 1，负责转换为 UI 可理解状态。

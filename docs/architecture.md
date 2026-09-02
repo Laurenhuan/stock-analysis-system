@@ -2,7 +2,7 @@
 
 ## Status
 
-Contract Review Candidate v0.2。仓库已经完成 Architecture Bootstrap，共享 Contract 已具备供 Role 2–5 并行实现和人工 Review 的基础。
+Contract Review Candidate v0.2。仓库已经完成 Architecture Bootstrap，共享 Contract 已具备供 Role 2–6 并行实现和人工 Review 的基础。当前六人 Ownership 以 `docs/role_boundaries.md` 为准。
 
 ## Layering
 
@@ -33,7 +33,7 @@ Service Layer 不负责：
 - 重新实现行情清洗或公共特征；
 - 自己训练分类或回归模型；
 - 自己实现聚类算法；
-- 重复 Role 2–5 已拥有的业务逻辑。
+- 重复 Role 2–6 已拥有的业务逻辑。
 
 ### Domain Modules
 
@@ -49,7 +49,7 @@ Service Layer 不负责：
 
 `src/contracts/` 保存轻量、可导入的共享 Schema 和字段常量。P0 使用 `TypedDict` 表示普通字典结果，并使用 `pandas.DataFrame` 表示表格数据；不引入额外抽象框架。
 
-Contract 文档是语义来源，Python 类型用于减少字段拼写和接口形状分歧，不能替代运行时数据校验。Role 2–5 可以在各自模块内部使用更具体的私有类型，但跨模块输出必须满足共享 Contract。
+Contract 文档是语义来源，Python 类型用于减少字段拼写和接口形状分歧，不能替代运行时数据校验。Role 2–6 可以在各自模块内部使用更具体的私有类型，但跨模块输出必须满足共享 Contract。
 
 ## Exception boundary
 
@@ -69,10 +69,13 @@ Domain Modules 抛出最具体的领域异常。Service Layer 可以记录上下
 | Role 1 | `app.py`, `pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, `docs/architecture.md`, `docs/contracts/` |
 | Role 2 | `src/data/` |
 | Role 3 | `src/analysis/`, `src/visualization/` |
-| Role 4 | `src/models/supervised/` |
-| Role 5 | `src/models/unsupervised/` |
+| Role 4 | `src/models/supervised/classification.py` 及分类/泄漏单元测试 |
+| Role 5 | `src/models/unsupervised/clustering.py` 及画像/聚类/复现单元测试 |
+| Role 6 | `src/models/supervised/regression.py` 及回归/泄漏单元测试 |
 
 Ownership 表示主要责任人，不是排他权限。跨模块修改必须协作并经过相关责任人的 Code Review。
+
+Role 1 统一协调 `src/models/supervised/__init__.py`、`src/models/unsupervised/__init__.py`、`requirements.txt`、共享 Fixture 和仓库配置等共享文件。Role 6 可以进行算法层 Review，但对应模块仍由各自 Owner 修改。
 
 ## Contract governance
 
