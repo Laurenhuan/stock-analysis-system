@@ -35,3 +35,15 @@ D1 AI 对话关键提示词记录
 
 [处理结果]
 确认今天为 D1；对齐团队共用日报与 prompts 命名规范（Gitee用户名-工具名.txt），补全 D1 记录结构。
+
+[用户提示 6]
+新增 AkShare 真实 A 股历史行情能力：10 支真实 A 股（沪深两市、行业分散、连续交易）、字段及单位转换（成交量 手→股、成交额不换算）、补 .SH/.SZ 后缀、保留 Tushare、单测 mock 网络、不建第二套数据入口，完成后提交独立分支 + PR。
+
+[处理结果]
+在现有 fetch_market_data 单一入口新增 source="akshare"（stock_zh_a_hist，前复权 qfq），中文列名映射 + 后缀补全 + 成交量 手→股；新增 10 项 AkShare mock 测试，数据层 45 项测试通过，提交 feat/akshare-provider 分支并开 PR #5。
+
+[用户提示 7]
+如果 tushare 不是免费的，你可以试试 tkshare 或者 yfinance 等免费软件呀。
+
+[处理结果]
+澄清数据源本就用免费 AkShare（卡住的是本机网络劫持 eastmoney 端点，非收费）；探测腾讯/新浪/Yahoo 三个免费源连通性后，选用同属 AkShare 的新浪源 stock_zh_a_daily 生成 10 支真实样例（volume 已是股、amount 已是元，零换算），数据层 52 测试通过，PR #5 更新说明。
