@@ -28,12 +28,12 @@
 - 测试：`tests/unit/test_eda.py` 19 个 + `tests/unit/test_charts.py` 20 个 = **39 个全部通过**；补装 scikit-learn 后全仓库 **69 个测试全部通过**
 - 只读对接验证：`git fetch` gitee 的 `feat/data-foundation` 分支到临时目录（不动本地工作区、不改 `src/data/` 和 `pages/`），Role 2 的 `clean_market_data` + `build_common_features` 输出直接喂给我的 EDA/图表，**零改动跑通**；字段 / 空值 / 单位均符合契约，无需反馈 Role 2
 - 边界自查：`src/analysis/`、`src/visualization/` 内无 AkShare / Tushare / Streamlit 引用，分析只消费 Role 2 的标准 DataFrame
-- 本地冒烟脚本 `scripts/demo_eda.py`：Sample Data 全流程跑通，导出 6 张 HTML 图（含热力图与选股演示）
+- 本地演示脚本 `scripts/demo_eda.py`：Sample Data 全流程跑通，导出 6 张 HTML 图（含热力图与选股演示）
 - 今日提交（分支 `feat/eda-visualization`，作者 `aaaspringaaa`）：
   - `8cc3707` feat(eda): 实现 6 个 EDA 分析函数（描述统计/日期范围/风险收益/收益对比/相关矩阵/缺失值）
   - `4906034` feat(charts): 实现 6 个 Plotly 图表，支持 symbols 选股与相关系数热力图
   - `34accd5` test: 新增 EDA 与图表单元测试 39 个，覆盖 10 只股票规模与选股
-  - `docs`: 添加 demo 冒烟脚本、D2 过程记录与 prompts 导出（随本记录一并提交）
+  - `docs`: 添加 demo 演示脚本、D2 过程记录与 prompts 导出（随本记录一并提交）
 
 ## 遇到的问题与解决
 
