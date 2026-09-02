@@ -33,18 +33,10 @@
 - [ ] R18 完成六人模块集成测试、异常提示和演示数据检查（已覆盖 Role 2/3/5/6 与页面边界，待 Role 4）
 - [ ] R19 完成调研报告、项目报告、演示材料和最终回归测试
 
-## D2 集成验收记录（Role 5）
+## D2 集成验收记录
 
-- [x] `build_stock_profiles()` 使用 Role 2 的 return 列（D2 完成）
-- [x] `run_clustering()` 加强输入校验（D2 完成）
-- [x] FEATURE_COLS 改为 tuple，异常类型统一（D2 完成）
-- [x] 39 个单元测试全部通过（D2 完成）
-- [x] 真实端到端测试：build_common_features → build_stock_profiles → run_clustering（D2 完成）
-- [x] PR #7 已推送并更新（D2 完成）
-- [ ] 等待组长 Review，根据意见修改
-- [ ] 与 Role 1 联调 Service Layer 接入
-
-## 每日记录
-
-- [ ] daily/ 每日日报（D1…D6）
-- [ ] prompts/ 提示词导出（D1…D6）
+- 当前分支：`integration/d2`；已有本地提交 `51884df` 和 `7547408`，分支领先远端 2 个 commit，尚未 push。本轮课程材料路径修正仍未提交。
+- 完整测试：`179 passed`；新增的 Service/分层集成测试：`17 passed`。
+- Streamlit 检查：首页与 4 个页面入口均无加载异常，4 个功能页默认按钮链路均无异常。
+- Role 1 D2 日报路径：`daily/25151407/D2.md`；三份期末过程文档复制到 `docs/25151407/`并保留根目录旧链接。
+- Role 1 真实 Codex 对话尚待操作者导出到 `prompts/25151407/D2/codex.txt`；本次未创建任何伪造 prompts。
