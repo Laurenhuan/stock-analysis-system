@@ -16,10 +16,12 @@ from plotly.graph_objects import Figure
 
 from src.utils.exceptions import DataValidationError, NoDataError
 
-# Brand-neutral colour sequence reused across every figure.
+# Brand-neutral colour sequence reused across every figure. Kept at 10+
+# distinct colours because the target scale is 10 stocks per chart.
 _COLOR_SEQUENCE = [
     "#4C78A8", "#F58518", "#54A24B", "#E45756",
     "#72B7B2", "#B279A2", "#FF9DA6", "#9D755D",
+    "#B6992D", "#EDC948",
 ]
 
 
@@ -76,7 +78,11 @@ def plot_price(
     holds many stocks); by default every symbol is drawn.
     """
     _check_input(df, ("trade_date", "close"), label="plot_price")
-    if "symbol" in df.columns and symbols is not None:
+    if symbols is not None:
+        if "symbol" not in df.columns:
+            raise DataValidationError(
+                "plot_price 指定了 symbols 选股，但输入缺少 symbol 字段"
+            )
         df = _filter_symbols(df, symbols, label="plot_price")
     fig = go.Figure()
     multi = "symbol" in df.columns and df["symbol"].nunique() > 1
@@ -90,8 +96,10 @@ def plot_price(
                 )
             )
     else:
+        # 单一股票时保留其 symbol 作为线名（选股后只剩 1 只的情况同样适用）
+        name = str(df["symbol"].iloc[0]) if "symbol" in df.columns else "收盘价"
         fig.add_trace(
-            go.Scatter(x=df["trade_date"], y=df["close"], mode="lines", name="收盘价")
+            go.Scatter(x=df["trade_date"], y=df["close"], mode="lines", name=name)
         )
         if show_ma:
             for window in ma_windows:
@@ -166,26 +174,43 @@ def plot_correlation_matrix(
 ) -> Figure:
     """Heatmap of a cross-symbol correlation matrix.
 
-    ``corr`` is the output of ``src.analysis.eda.correlation_matrix``: a square
-    DataFrame whose index and columns are symbols. Values are pinned to [-1, 1]
-    and rendered with a diverging red/blue scale.
+    ``corr`` is either the output of ``src.analysis.eda.correlation_matrix`` —
+    a square DataFrame whose index and columns hold the symbol labels — or a
+    square array-like. Inputs are validated before any index access: axis
+    labels must match, values must be finite and within [-1, 1], and the
+    diverging colour scale is centred on ``zmid=0``.
     """
     if isinstance(corr, DataFrame):
-        x_labels = [str(x) for x in corr.columns]
-        y_labels = [str(x) for x in corr.index]
-        arr = corr.to_numpy(dtype=float)
+        if corr.empty:
+            raise DataValidationError("相关系数矩阵 DataFrame 不能为空")
+        if list(corr.index) != list(corr.columns):
+            raise DataValidationError(
+                "相关系数矩阵 DataFrame 的 index 与 columns 标签必须一致且顺序相同"
+            )
+        try:
+            arr = corr.to_numpy(dtype=float)
+        except ValueError as exc:
+            raise DataValidationError(
+                f"相关系数矩阵 DataFrame 含非数值内容：{exc}"
+            ) from exc
+        labels = [str(x) for x in corr.index]
     else:
         arr = np.asarray(corr, dtype=float)
-        x_labels = y_labels = [str(i) for i in range(arr.shape[0])]
+        labels = [str(i) for i in range(arr.shape[0])] if arr.ndim == 2 else []
     if arr.ndim != 2 or arr.shape[0] != arr.shape[1] or arr.shape[0] == 0:
         raise DataValidationError("相关系数矩阵必须是 n×n 非空方阵")
+    if not np.isfinite(arr).all():
+        raise DataValidationError("相关系数矩阵含 NaN/inf，无法渲染热力图")
+    if bool(((arr < -1.0) | (arr > 1.0)).any()):
+        raise DataValidationError("相关系数取值必须在 [-1, 1] 内")
     fig = go.Figure(
         go.Heatmap(
             z=arr,
-            x=x_labels,
-            y=y_labels,
+            x=labels,
+            y=labels,
             zmin=-1.0,
             zmax=1.0,
+            zmid=0.0,
             colorscale="RdBu_r",
             text=[[f"{v:.{decimals}f}" for v in row] for row in arr],
             texttemplate="%{text}",
@@ -200,14 +225,17 @@ def plot_correlation_matrix(
 def plot_confusion_matrix(
     cm, *, labels: tuple[str, ...] = ("0", "1"), title: str | None = None
 ) -> Figure:
-    """Heatmap of a square confusion matrix.
+    """Heatmap of the 2×2 binary confusion matrix.
 
-    Rows are true labels, columns are predicted labels. ``labels`` follows the
-    fixed ``[0, 1]`` order required by the supervised-learning Contract.
+    Rows are true labels, columns are predicted labels, following the fixed
+    ``[0, 1]`` order required by the supervised-learning Contract. Exactly two
+    labels must be provided.
     """
     arr = np.asarray(cm, dtype=float)
-    if arr.ndim != 2 or arr.shape[0] != arr.shape[1] or arr.shape[0] == 0:
-        raise DataValidationError("混淆矩阵必须是 n×n 非空方阵")
+    if arr.shape != (2, 2):
+        raise DataValidationError("按二分类 Contract，混淆矩阵必须是 2×2")
+    if len(labels) != 2:
+        raise DataValidationError("二分类混淆矩阵必须提供恰好两个标签")
     fig = go.Figure(
         go.Heatmap(
             z=arr, x=list(labels), y=list(labels),
@@ -223,9 +251,11 @@ def plot_actual_vs_predicted(df: DataFrame, *, title: str | None = None) -> Figu
     """Scatter of predicted vs actual values with a y=x reference line.
 
     Expects the ``y_true`` and ``y_pred`` columns from a regression prediction
-    DataFrame.
+    DataFrame; both must be finite numbers.
     """
     _check_input(df, ("y_true", "y_pred"), label="plot_actual_vs_predicted")
+    if not np.isfinite(df[["y_true", "y_pred"]].to_numpy(dtype=float)).all():
+        raise DataValidationError("y_true/y_pred 含 NaN 或 inf，无法绘图")
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(x=df["y_true"], y=df["y_pred"], mode="markers", name="样本")

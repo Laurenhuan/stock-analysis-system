@@ -129,8 +129,9 @@ def test_risk_return_summary_max_drawdown(multi_df):
     # max_drawdown is the deepest (most negative) drawdown.
     assert a["max_drawdown"] == pytest.approx(105 / 110 - 1)
     assert b["max_drawdown"] == pytest.approx(-0.1)
-    # volatility is the interval-average of the rolling 20d values.
-    assert a["volatility"] == pytest.approx(0.08)
+    # volatility is the sample std (ddof=1) of daily returns.
+    returns_a = np.array([110 / 100 - 1, 105 / 110 - 1, 120 / 105 - 1, 115 / 120 - 1])
+    assert a["volatility"] == pytest.approx(returns_a.std(ddof=1))
 
 
 def test_risk_return_summary_missing_column(multi_df):
@@ -150,6 +151,23 @@ def test_returns_comparison_cumulative(multi_df):
     assert a["cumulative_return"] == pytest.approx(0.15)
 
 
+def test_returns_comparison_win_rate_ignores_nan(multi_df):
+    result = returns_comparison(multi_df)
+    a = result.set_index("symbol").loc["600519.SH"]
+    # 首日 NaN 不应计为下跌日：4 个有效交易日中 2 天上涨 → 2/4 = 0.5
+    assert a["win_rate"] == pytest.approx(2 / 4)
+
+
+def test_returns_comparison_all_nan_returns(multi_df):
+    df = multi_df.copy()
+    df["return"] = np.nan
+    result = returns_comparison(df)
+    row = result.set_index("symbol").loc["600519.SH"]
+    assert np.isnan(row["cumulative_return"])
+    assert np.isnan(row["win_rate"])
+    assert np.isnan(row["std_return"])
+
+
 def test_returns_comparison_missing_column(multi_df):
     with pytest.raises(DataValidationError):
         returns_comparison(multi_df.drop(columns=["return"]))
@@ -164,11 +182,45 @@ def test_correlation_matrix_shape_and_diagonal(multi_df):
     assert corr.loc["000001.SZ", "000001.SZ"] == pytest.approx(1.0)
 
 
-def test_correlation_matrix_uses_spearman(multi_df):
-    # Spearman of identical ranks is +1; just verify the method is accepted and
-    # the values stay within [-1, 1].
-    corr = correlation_matrix(multi_df, method="spearman")
-    assert ((corr >= -1) & (corr <= 1)).all().all()
+def test_correlation_matrix_spearman_perfect_rank():
+    # 手工可算秩关系：A、B 收益率逐日严格递增 → +1；C 严格递减 → 与 A 为 -1
+    closes = {
+        "A": [100.0, 101.0, 103.0, 108.0],
+        "B": [10.0, 10.5, 11.5, 15.0],
+        "C": [20.0, 19.5, 19.0, 18.0],
+    }
+    rows = []
+    for i in range(4):
+        for sym, cs in closes.items():
+            prev = cs[i - 1] if i > 0 else None
+            rows.append(
+                {
+                    "symbol": sym,
+                    "trade_date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i),
+                    "return": cs[i] / prev - 1 if prev else np.nan,
+                }
+            )
+    corr = correlation_matrix(pd.DataFrame(rows), method="spearman")
+    assert corr.loc["A", "B"] == pytest.approx(1.0)
+    assert corr.loc["A", "C"] == pytest.approx(-1.0)
+    assert corr.loc["B", "C"] == pytest.approx(-1.0)
+
+
+def test_correlation_matrix_invalid_method(multi_df):
+    with pytest.raises(DataValidationError):
+        correlation_matrix(multi_df, method="bogus")
+
+
+def test_correlation_matrix_insufficient_overlap():
+    # 两只股票只有 1 个共同有效交易日 → 明确报错而不是返回全 NaN
+    rows = [
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-02"), "return": 0.01},
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-03"), "return": -0.01},
+        {"symbol": "B", "trade_date": pd.Timestamp("2024-01-02"), "return": 0.02},
+        {"symbol": "B", "trade_date": pd.Timestamp("2024-06-01"), "return": 0.03},
+    ]
+    with pytest.raises(InsufficientDataError):
+        correlation_matrix(pd.DataFrame(rows))
 
 
 def test_correlation_matrix_insufficient_symbols(single_df):
@@ -213,3 +265,17 @@ def test_correlation_matrix_ten_by_ten():
     corr = correlation_matrix(_make_df(syms))
     assert corr.shape == (10, 10)
     assert np.allclose(np.diag(corr), 1.0)
+    # index 与 columns 的股票标签及顺序一致
+    assert list(corr.index) == list(syms)
+    assert list(corr.columns) == list(syms)
+
+
+def test_eda_functions_do_not_mutate_input(multi_df):
+    before = multi_df.copy(deep=True)
+    describe_statistics(multi_df)
+    date_range_summary(multi_df)
+    risk_return_summary(multi_df)
+    returns_comparison(multi_df)
+    correlation_matrix(multi_df)
+    missing_values_summary(multi_df)
+    pd.testing.assert_frame_equal(multi_df, before)
