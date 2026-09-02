@@ -47,3 +47,9 @@ D1 AI 对话关键提示词记录
 
 [处理结果]
 澄清数据源本就用免费 AkShare（卡住的是本机网络劫持 eastmoney 端点，非收费）；探测腾讯/新浪/Yahoo 三个免费源连通性后，选用同属 AkShare 的新浪源 stock_zh_a_daily 生成 10 支真实样例（volume 已是股、amount 已是元，零换算），数据层 52 测试通过，PR #5 更新说明。
+
+[用户提示 8]
+（PR 首轮 review 反馈，暂不通过）请补充端到端单位测试、明确 source 回退顺序、auto 回退记录失败原因、检查 except:pass、抓取脚本先抓全再写并支持 --out、报告完整 pytest 及 Tushare 失败、确认真实 CSV 交付与 README 准确性；修好后在原分支继续提交。
+
+[处理结果]
+逐项处理：新增 df.attrs["fallback_reason"]（缺 token / 失败 / 空结果）及测试；端到端单位测试补 _detect_units=standard 断言（证明 amount 不 ×1000、volume 只 ×100 一次）；抓取脚本加 --out/--start/--end 与临时文件原子写入；确认无 except:pass 静默吞异常；补装 scikit-learn 后全仓 76 项通过。提交 f75c4a2 并推送，PR #5 指派组长 Laurenhuan 重新 review。
