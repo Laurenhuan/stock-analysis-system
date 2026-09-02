@@ -6,9 +6,8 @@ This document is the authoritative implementation boundary for the current
 six-person team. It supersedes the former five-role split for all new work and
 PR Review. Existing approved commits remain valid.
 
-The team labels below identify the current assignment but are not necessarily
-GitHub usernames. Do not activate `.github/CODEOWNERS` until every real GitHub
-handle is verified.
+The team labels below identify the current assignment. Gitee usernames used
+for course attribution are recorded in `docs/course_submission.md`.
 
 ## Integration model
 
@@ -159,11 +158,14 @@ Every Role 2-6 PR must report:
 ## Pull Request workflow
 
 ```text
-central main -> personal fork feature branch -> commits -> PR -> human Review
+Gitee central main -> feature branch -> commits -> Gitee PR -> human Review
 -> fixes on the same branch -> complete tests -> merge
 ```
 
-`Ready to merge` only means GitHub found no merge conflict. A PR is mergeable
+Gitee is the primary course repository. GitHub is a backup mirror updated by
+Role 1 after Gitee `main` is reviewed and tested; independent development must
+not occur on both platforms. `Ready to merge` only means Gitee found no merge
+conflict. A PR is mergeable
 only after required human Review, exact tests and Contract/Ownership checks.
 Do not open duplicate PRs for Review fixes; push normal follow-up commits to the
 existing feature branch. Do not force-push reviewed history unless the team

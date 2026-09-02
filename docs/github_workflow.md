@@ -1,85 +1,89 @@
-# GitHub Collaboration Workflow
+# Gitee Primary and GitHub Mirror Workflow
 
-This is the minimum collaboration process for the six-person team. It deliberately avoids complex DevOps.
+本项目从课程 D1 起以 Gitee 为唯一开发主仓库，GitHub 仅保留为备份镜像。文件名沿用 `github_workflow.md`，避免旧链接失效。
 
 ## Repository topology
 
-The central repository is owned and integrated by Role 1. Role 2-6 develop in personal forks and open Pull Requests back to central `main`.
-
 ```text
-central: Laurenhuan/stock-analysis-system
-    ↑ Pull Request
-personal fork / feature branch
+Gitee: sp1-2026/25151407 (primary)
+    feature branch -> Gitee Pull Request -> main
+                                      |
+                                      +-> Role 1 pushes tested main to GitHub
+GitHub: Laurenhuan/stock-analysis-system (mirror)
 ```
 
-Role 1 may use the central repository as `origin` but still develops on a feature branch and opens a same-repository PR. Nobody develops directly on central `main`.
+六位成员都是 Gitee 中央仓库开发者，不再要求为课程开发维护个人 GitHub fork。不得在 Gitee 和 GitHub 分别产生两套独立提交。
 
-## Role 2-6: first-time fork setup
+## First-time setup
+
+新成员优先直接克隆 Gitee：
 
 ```bash
-git clone <personal-fork-url>
-cd stock-analysis-system
-git remote add upstream <central-repository-url>
+git clone https://gitee.com/sp1-2026/25151407.git
+cd 25151407
+git remote add github https://github.com/Laurenhuan/stock-analysis-system.git
 git remote -v
 ```
 
-`origin` must be the contributor's fork. `upstream` must be the central repository. Do not guess either URL; verify both before pushing.
+如果仓库原本以 GitHub 为 `origin`，转换一次：
+
+```bash
+git remote rename origin github
+git remote rename gitee origin
+git remote -v
+```
+
+预期结果是 `origin` 指向 Gitee，`github` 指向 GitHub。不要把账号密码或 Token 写进 URL、脚本或仓库。
 
 ## Start each task
 
 ```bash
-git checkout main
-git fetch upstream
-git merge --ff-only upstream/main
-git checkout -b <assigned-feature-branch>
+git switch main
+git fetch origin
+git merge --ff-only origin/main
+git switch -c <assigned-feature-branch>
 ```
 
-Use the branch recorded in `docs/role_boundaries.md` and the relevant Issue. If local work prevents a fast-forward update, stop and inspect instead of resetting or discarding changes.
+使用 `docs/role_boundaries.md` 记录的模块分支。若本地修改阻止切换或快进，先检查和提交自己的工作，不使用 `reset --hard` 丢弃文件。
 
-## Finish development
+## Commit and push before 24:00
 
 ```bash
 git status
 git diff
 git add <specific-files>
 git commit -m "feat(module): description"
-git push -u origin feat/xxx
+git push -u origin <assigned-feature-branch>
 ```
 
-Then follow:
+当天未完成的模块也应形成真实、可解释的阶段提交并推送分支。每位成员同时提交自己的 `prompts/Dn/Gitee用户名-工具.txt`；Role 1 协调 `daily/Dn.md` 和 `todos.md`。
+
+## Gitee Pull Request
 
 ```text
-Pull Request → Human Review → Merge
+feature branch -> Gitee Pull Request -> path owner Review -> fixes on same branch
+-> module tests -> complete tests -> merge into main
 ```
 
-Complete the PR template, include exact test results, and request Review from the path owner listed in `docs/code_ownership.md`.
+Review 必须核对 Ownership、Contract、输入输出、时间序列切分和测试结果。无冲突不等于可以合并。Review 修复继续推送原分支，不重复创建 PR，不强推已评审历史。
 
-The PR base is central `main`; the compare branch is the contributor fork's assigned feature branch. Review fixes are pushed as normal new commits to the same branch and automatically update the existing PR. Do not open a duplicate PR and do not force-push reviewed history.
+## Mirror reviewed main to GitHub
 
-Before approval, Reviewers must inspect `Files changed`, verify Ownership and Contract boundaries, and confirm the complete test command. GitHub's `Ready to merge` status means only that no merge conflict was detected.
+只有 Role 1 在 Gitee PR 合并并通过完整测试后执行：
 
-## Main branch protection
-
-After the Private repository exists, a repository administrator should open:
-
-```text
-GitHub repository → Settings → Branches or Rules → Add rule for main
+```bash
+git switch main
+git pull --ff-only origin main
+git push github main
 ```
 
-Enable only the baseline rule:
-
-```text
-Require a Pull Request before merging
-```
-
-Do not enable broad enterprise restrictions unless the team later needs them. Verify the rule in GitHub UI; never report protection as active until GitHub confirms it.
+如果 GitHub 拒绝快进，停止并检查两个平台是否出现独立提交；禁止直接使用 `--force` 覆盖。
 
 ## Prohibited operations
 
-- Do not develop directly on `main`.
-- Do not run `git push --force`.
-- Do not run `git reset --hard` when the impact is not fully understood.
-- Do not silently modify another Role's Contract or business logic.
-- Do not implement Streamlit or Service code outside Role 1 unless a cross-role change is explicitly coordinated.
-- Do not modify another algorithm owner's module merely because Role 6 provided a Review.
-- Do not commit `.env`, tokens, credentials, caches, or raw/processed datasets.
+- 不直接开发或提交到 `main`。
+- 不执行 `git push --force`。
+- 不在两个平台分别修改同一任务。
+- 不越过 Owner 修改其他 Role 的业务模块或公共 Contract。
+- 不提交 `.env`、Token、密码、Cookie、缓存和大体积原始数据。
+- 不替其他成员编造日报、提示词记录、测试结果或算法结果。

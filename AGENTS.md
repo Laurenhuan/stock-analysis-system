@@ -54,14 +54,31 @@ approved `INTERFACE / DATA POLICY CHANGE REQUEST` before implementation.
 
 ## Git and review rules
 
-- Start from the central repository's current `main`.
-- Role 2-6 work on the assigned feature branch in their personal fork.
-- Never commit directly to central `main` and never force-push reviewed history.
+- Gitee `origin` (`sp1-2026/25151407`) is the primary course repository.
+- GitHub `github` is a backup mirror; do not develop independent commits on
+  both platforms.
+- Start from Gitee's current `main` and push the assigned feature branch to the
+  central Gitee repository.
+- Never commit directly to `main` and never force-push reviewed history.
 - Do not reset, overwrite or delete unrelated work.
 - Run module tests and the complete test suite before requesting Review.
 - Push Review fixes to the existing PR branch; do not open a duplicate PR.
-- `Ready to merge` means only that GitHub found no conflict. Human Review,
+- `Ready to merge` means only that Gitee found no conflict. Human Review,
   Contract/Ownership checks and exact tests are still required.
 
+## Course process records
+
+- Before 24:00, every contributor pushes that day's commits and feature branch
+  to Gitee.
+- Role 1 coordinates `daily/Dn.md` and `todos.md`; progress must match actual
+  commits and tests.
+- Every contributor adds their own plain-text AI record under `prompts/Dn/`
+  using `GiteeUsername-tool.txt`. Do not fabricate another member's record.
+- Never commit passwords, tokens, cookies or personal identity data in prompt
+  exports.
+- Course reports are Markdown files under `docs/`; images belong in
+  `docs/assets/`.
+
 Detailed boundaries, branch names, handoff requirements and the Review matrix
-are authoritative in `docs/role_boundaries.md`.
+are authoritative in `docs/role_boundaries.md`. Daily repository operations
+are defined in `docs/course_submission.md` and `docs/github_workflow.md`.

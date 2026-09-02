@@ -1,0 +1,37 @@
+证券金融数据分析与可视化系统
+D1 AI 对话关键提示词记录
+日期：2026-09-02
+工具：Codex
+使用者：Laurenhuan（Role 1）
+
+说明：以下内容来自当天真实协作对话，保留关键用户提示词与处理结果；未包含密码、Token 或 Cookie。
+
+[用户提示 1]
+我们的分工已经更改，然后你把昨天说的每个人的边界还有任务都更新到这个github里，让别的agent做任务的时候都能够看到。
+
+[处理结果]
+新增 AGENTS.md 和 docs/role_boundaries.md，将监督学习拆分为 Role 4 Decision Tree 分类与 Role 6 Linear Regression 回归，并明确 Role 5 K-Means、Role 1 集成及共享文件 Review 边界。
+
+[用户提示 2]
+按我手动推送的方式继续更新六人边界。
+
+[处理结果]
+在隔离分支生成本地提交，用户手动推送；PR 与 main 冲突后，拉取最新 main，保留双方 README 和 docs/ai_usage.md 内容，完整测试 49 项通过。
+
+[用户提示 3]
+老师要求每天提交 git 提交、提示词文本和 daily/D1.md，并要求 README、todos.md、daily、prompts 和中文 docs 目录；我们之前使用 GitHub，Gitee 怎么处理？
+
+[处理结果]
+根据课程扫描要求，确定 Gitee 作为主仓库，GitHub 保留为备份镜像，避免两套代码分别开发。
+
+[用户提示 4]
+团队项目是否每个人建立一个学号仓库，还是使用组长学号仓库？
+
+[处理结果]
+根据课程说明“团队项目共用组长仓库”，采用组长学号 25151407 的单一仓库，其他五人作为开发者加入，commit 通过各自作者信息区分。
+
+[用户提示 5]
+Gitee 仓库：https://gitee.com/sp1-2026/25151407.git；成员已全部加入，然后做什么？
+
+[处理结果]
+确认六人开发权限和 Role 映射，创建 docs/course-records 分支，配置 Gitee remote，并建立课程规定的文件结构和 D1 真实过程记录。
