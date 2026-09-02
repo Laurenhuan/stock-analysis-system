@@ -24,3 +24,6 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+
+# Generated demo output (local HTML figures, ~25 MB)
+data/sample/_demo_output/

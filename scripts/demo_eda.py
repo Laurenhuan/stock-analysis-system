@@ -1,4 +1,4 @@
-"""Local smoke test for Role 3's EDA + visualization modules.
+"""Local demo for Role 3's EDA + visualization modules.
 
 Runs every public function in ``src/analysis/eda`` and ``src/visualization/charts``
 against ``data/sample/sample_market_data.csv`` (8 symbols x 60 rows) and exports
