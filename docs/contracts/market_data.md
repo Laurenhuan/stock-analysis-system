@@ -2,7 +2,7 @@
 
 **Contract Status: Review Candidate v0.2**
 
-**Owner: Role 2（需 Role 1、3、4、5 Review）**
+**Owner: Role 2（需 Role 1、3、4、5、6 Review）**
 
 ## 1. Scope
 

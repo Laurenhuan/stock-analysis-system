@@ -1,4 +1,4 @@
-# CODEOWNERS is intentionally inactive until the five real GitHub usernames
+# CODEOWNERS is intentionally inactive until the six real GitHub usernames
 # are confirmed. Do not invent placeholder accounts: invalid owners provide no
 # review protection and create a false sense of enforcement.
 #
@@ -7,8 +7,11 @@
 #         tests/integration/, docs/architecture.md, docs/contracts/
 # Role 2: src/data/
 # Role 3: src/analysis/, src/visualization/
-# Role 4: src/models/supervised/
-# Role 5: src/models/unsupervised/
+# Role 4: src/models/supervised/classification.py and classification tests
+# Role 5: src/models/unsupervised/clustering.py and clustering/profile tests
+# Role 6: src/models/supervised/regression.py and regression tests
+# Shared supervised/unsupervised __init__.py and repository-wide files:
+#         coordinated by Role 1 with every affected Role reviewing
 #
 # The authoritative path mapping and review policy are documented in
-# docs/code_ownership.md.
+# docs/code_ownership.md and docs/role_boundaries.md.

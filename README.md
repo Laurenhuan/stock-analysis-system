@@ -54,15 +54,16 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## 团队 Role
+## 六人团队 Role
 
-1. Role 1：系统架构、Streamlit、Service Layer、集成测试与工程治理。
-2. Role 2：金融数据获取、清洗、公共特征与数据存储。
-3. Role 3：EDA、描述统计与金融数据可视化。
-4. Role 4：Decision Tree Classification 与 Linear Regression。
-5. Role 5：K-Means 与股票风险收益画像。
+1. Role 1：系统架构与应用集成，负责 Streamlit、Service Layer、接口协调、中央仓库、PR 和最终集成。
+2. Role 2：金融数据工程，负责 A 股数据获取、清洗、标准 DataFrame 和公共金融指标。
+3. Role 3：金融数据分析与可视化，负责 EDA、描述统计、Plotly 图表和多股票比较。
+4. Role 4：监督学习分类，负责 Decision Tree、下一交易日上涨/非上涨、Accuracy 和 Confusion Matrix。
+5. Role 5：无监督学习与股票画像，负责 Stock Profile、StandardScaler、K-Means、Cluster 结果和横向股票定位。
+6. Role 6：监督学习回归与算法工程，负责 Linear Regression、下一交易日收益率、MAE、R²、Actual-vs-Predicted 数据及算法 Review。
 
-详细 Ownership 见 `docs/architecture.md`。
+Agent 开始工作前必须阅读根目录 `AGENTS.md`。详细 Ownership、禁止修改范围、分支和交付规则见 `docs/role_boundaries.md`；架构说明见 `docs/architecture.md`。
 
 ## GitHub 协作原则
 
