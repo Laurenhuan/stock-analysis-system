@@ -1,5 +1,7 @@
 # Pull Request Draft — Contract v0.2
 
+> Historical record from the former five-role baseline. For current assignments, read `AGENTS.md` and `docs/role_boundaries.md`.
+
 - Base: `main`
 - Head: `docs/contracts-v02`
 - Title: `docs(contracts): define shared contracts v0.2`

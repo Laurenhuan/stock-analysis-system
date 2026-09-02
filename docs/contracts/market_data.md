@@ -2,7 +2,7 @@
 
 **Contract Status: Review Candidate v0.2**
 
-**Owner: Role 2（需 Role 1、3、4、5 Review）**
+**Owner: Role 2（需 Role 1、3、4、5、6 Review）**
 
 ## 1. Scope
 
@@ -61,7 +61,7 @@ V1.0 只支持 A 股日频历史行情，不支持分钟、高频或人为生成
 | `volume_change` | `volume_t / volume_(t-1) - 1`；上一日成交量为 0 时结果为 NaN，不产生无穷值 |
 | `drawdown` | `close_t / close.cummax() - 1`，通常满足 `drawdown <= 0` |
 
-滚动窗口必须拥有完整的有效观察值后才产生结果。因此 `ma5` 前 4 个有效观察值、`ma20` 和 `volatility_20d` 前 19 个有效观察值可以为 NaN。将来如需年化波动率，应新增字段，不得改变 `volatility_20d` 的语义。
+滚动窗口必须拥有完整的有效观察值后才产生结果。因此 `ma5` 前 4 个有效观察值、`ma20` 前 19 个有效观察值、`volatility_20d` 前 20 个有效观察值可以为 NaN（`volatility_20d` 基于 `return` 计算，而 `return` 自身有 1 个前置 NaN，故比 `ma20` 多 1 行）。将来如需年化波动率，应新增字段，不得改变 `volatility_20d` 的语义。
 
 ## 6. Missing and invalid data
 

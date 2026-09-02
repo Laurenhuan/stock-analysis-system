@@ -1,6 +1,6 @@
-# Phase 1 Issue Drafts
+# Phase 1 Six-Role Issue Boundaries
 
-These Issue bodies are ready to copy into GitHub after the Private remote is available. Do not assign them until the real member usernames are confirmed.
+These task boundaries apply to the current six-person team. Assign Issues only to verified GitHub usernames. Every Agent must also read `AGENTS.md` and `docs/role_boundaries.md`.
 
 ## Role 2 — Financial Data Foundation P0
 
@@ -22,7 +22,7 @@ Acceptance criteria:
 
 - Role: Role 3
 - Goal: Build reusable EDA and Figure functions on Contract-compliant data.
-- Scope: Descriptive statistics, returns analysis, risk analysis, trend analysis, correlation, and independent Figure functions.
+- Scope: Descriptive statistics, returns analysis, risk analysis, trend analysis, correlation, multi-stock comparison, and independent Plotly Figure functions.
 - Owner: Role 3; GitHub assignee pending.
 - Contract dependencies: Market Data Contract v0.2.
 - Branch: `feat/eda-visualization`
@@ -34,21 +34,21 @@ Acceptance criteria:
 - No data acquisition, model training, or Streamlit page implementation.
 - No public Contract change without an approved Change Request.
 
-## Role 4 — Supervised Learning Foundation P0
+## Role 4 — Decision Tree Classification P0
 
 - Role: Role 4
-- Goal: Implement the approved supervised-learning baseline without time leakage.
-- Scope: Decision Tree Classification, Linear Regression, time-based train/test split, classification metrics, regression metrics, and leakage tests.
+- Goal: Implement next-trading-day up/non-up classification without time leakage.
+- Scope: `DecisionTreeClassifier`, time-based train/test split, Accuracy, fixed-order 2x2 Confusion Matrix, predictions, and classification leakage tests.
 - Owner: Role 4; GitHub assignee pending.
 - Contract dependencies: Market Data and Supervised Learning Contract v0.2.
-- Branch: `feat/supervised-learning`
+- Branch: `feat/decision-tree-classification`
 
 Acceptance criteria:
 
-- Uses `X(t) → y(t+1)` and the earliest 80% / latest 20% split without shuffle.
-- Returns the approved shared output Schema and P0 metrics.
-- Leakage and Contract tests pass.
-- No unapproved model or Web implementation.
+- Uses `X(t) → direction(t+1)` and the earliest 80% / latest 20% split without shuffle.
+- Returns the approved `ClassificationResult`, Accuracy and Confusion Matrix.
+- Classification leakage and Contract tests pass.
+- No regression, unapproved classifier or Web implementation.
 
 ## Role 5 — Clustering & Stock Profiling Foundation P0
 
@@ -65,3 +65,21 @@ Acceptance criteria:
 - Returns the approved profiles, cluster centers, features, and k fields.
 - Tests pass and reproducibility parameters are recorded.
 - No unapproved algorithm, EDA, or Web implementation.
+
+## Role 6 — Linear Regression & Algorithm Review P0
+
+- Role: Role 6
+- Goal: Implement next-trading-day return regression without time leakage and Review algorithm correctness across model PRs.
+- Scope: `LinearRegression`, time-based train/test split, MAE, R², date-aligned Actual-vs-Predicted data, regression leakage tests, and algorithm Review comments.
+- Owner: Role 6; GitHub assignee pending.
+- Contract dependencies: Market Data and Supervised Learning Contract v0.2.
+- Branch: `feat/linear-regression`
+
+Acceptance criteria:
+
+- Uses `X(t) → return(t+1)` and the earliest 80% / latest 20% split without shuffle.
+- Returns the approved `RegressionResult`, MAE, R² and date-aligned predictions.
+- Regression leakage and Contract tests pass.
+- Algorithm Review checks temporal splitting, target alignment, NaN handling, scaler fitting, sklearn parameters and reproducibility.
+- Review comments do not authorize Role 6 to modify another owner's module without explicit coordination.
+- No classification, clustering, unapproved regressor or Web implementation.
