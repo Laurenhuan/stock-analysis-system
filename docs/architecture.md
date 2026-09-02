@@ -2,7 +2,7 @@
 
 ## Status
 
-Contract Review Candidate v0.2。仓库已经完成 Architecture Bootstrap，共享 Contract 已具备供 Role 2–6 并行实现和人工 Review 的基础。当前六人 Ownership 以 `docs/role_boundaries.md` 为准。
+Contract Review Candidate v0.2。D2 已把 Role 2/3/5/6 的公共实现接入 Role 1 Service 与 Streamlit 页面；Role 4 Decision Tree 仍保持待接入状态。当前六人 Ownership 以 `docs/role_boundaries.md` 为准，日常集成规则见 `docs/team_conventions.md`。
 
 ## Layering
 
@@ -34,6 +34,15 @@ Service Layer 不负责：
 - 自己训练分类或回归模型；
 - 自己实现聚类算法；
 - 重复 Role 2–6 已拥有的业务逻辑。
+
+D2 对页面开放的稳定入口为：
+
+| 页面用例 | Service 入口 | Domain Owner |
+| --- | --- | --- |
+| 行情数据 | `load_market_data` | Role 2 |
+| 价格图与 EDA | `build_price_figure` / `build_eda_dashboard` | Role 3 |
+| 线性回归 | `run_regression_dashboard` | Role 6 + Role 3 图表 |
+| 股票聚类 | `run_stock_clustering` | Role 5 |
 
 ### Domain Modules
 

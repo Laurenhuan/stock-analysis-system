@@ -29,3 +29,11 @@
 - GitHub 流程：Role 2–6 使用个人 Fork 和指定功能分支向中央 `main` 提交 PR；修正继续推送到原 PR 分支，不创建重复 PR；`Ready to merge` 不替代人工 Review 和完整测试。
 - Contract 状态：未修改字段、单位、算法或输出 Schema，只更新 Supervised Learning Contract 的分类/回归 Owner 元数据。
 - 下一步：人工 Review 本次文档 PR，确认六名成员真实 GitHub username 后再激活 `.github/CODEOWNERS`。
+
+## 2026-09-02 — D2 Cross-Module Integration
+
+- Role：Role 1 集成，消费 Role 2/3/5/6 的已合并公共接口。
+- 完成内容：统一 Market/EDA/Regression/Clustering Service；四个 Streamlit 页面改为只通过 `src.services` 调用 Domain；数据页切换为 Role 2 正式 Sample 链路；聚类页固定 `k=3`。
+- 真实状态：EDA、Linear Regression 和 K-Means 已接入；Decision Tree 尚未合并，未生成占位结果。
+- 质量保护：新增正式数据流、跨模块 Service 和依赖方向集成测试；完整结果见 `daily/D2.md`。
+- 下一步：人工 Review 并由 Role 1 提交/推送当前本地改动；待 Role 4 交付后在同一 Service 边界接入分类。

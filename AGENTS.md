@@ -1,7 +1,7 @@
 # Agent Working Agreement
 
-Every coding agent must read this file and `docs/role_boundaries.md` before
-changing code in this repository.
+Every coding agent must read this file, `docs/role_boundaries.md` and
+`docs/team_conventions.md` before changing code in this repository.
 
 ## Architecture direction
 
