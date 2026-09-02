@@ -54,9 +54,3 @@ D1 AI 对话关键提示词记录
 
 [处理结果]
 逐项处理：新增 df.attrs["fallback_reason"]（缺 token / 失败 / 空结果）及测试；端到端单位测试补 _detect_units=standard 断言（证明 amount 不 ×1000、volume 只 ×100 一次）；抓取脚本加 --out/--start/--end 与临时文件原子写入；确认无 except:pass 静默吞异常；补装 scikit-learn 后全仓 76 项通过。提交 f75c4a2 并推送，PR #5 指派组长 Laurenhuan 重新 review。
-
-[用户提示 9]
-（组长要求）先同步远端，把 daily 和 prompts 按「学号」归入子目录，本次 PR 只加日报和提示词。
-
-[处理结果]
-从 gitee/main 新建 docs/25151404-d1-records 分支，按老师规则将 Role 2 日报归档为 daily/25151404/D1.md、提示词归档为 prompts/25151404/D1/claude.txt，仅提交这两份记录文件。
