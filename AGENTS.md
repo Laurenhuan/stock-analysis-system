@@ -1,7 +1,7 @@
 # Agent Working Agreement
 
-Every coding agent must read this file and `docs/role_boundaries.md` before
-changing code in this repository.
+Every coding agent must read this file, `docs/role_boundaries.md` and
+`docs/team_conventions.md` before changing code in this repository.
 
 ## Architecture direction
 
@@ -70,14 +70,19 @@ approved `INTERFACE / DATA POLICY CHANGE REQUEST` before implementation.
 
 - Before 24:00, every contributor pushes that day's commits and feature branch
   to Gitee.
-- Role 1 coordinates `daily/Dn.md` and `todos.md`; progress must match actual
-  commits and tests.
-- Every contributor adds their own plain-text AI record under `prompts/Dn/`
-  using `GiteeUsername-tool.txt`. Do not fabricate another member's record.
+- Root `README.md` and `todos.md` are shared by the whole team and coordinated
+  by Role 1; progress must match actual commits and tests.
+- Every contributor writes only their own daily report at
+  `daily/<student_id>/Dn.md`. Never guess another member's student ID or write
+  another member's report.
+- Every contributor adds their own plain-text AI record at
+  `prompts/<student_id>/Dn/<tool>.txt`. Do not fabricate another member's
+  record.
 - Never commit passwords, tokens, cookies or personal identity data in prompt
   exports.
-- Course reports are Markdown files under `docs/`; images belong in
-  `docs/assets/`.
+- Each contributor's course reports belong at
+  `docs/<student_id>/立项报告.md`, `docs/<student_id>/调研报告.md` and
+  `docs/<student_id>/项目报告.md`; images belong in `docs/assets/`.
 
 Detailed boundaries, branch names, handoff requirements and the Review matrix
 are authoritative in `docs/role_boundaries.md`. Daily repository operations

@@ -17,6 +17,8 @@ MODULES = (
     "src.contracts.clustering",
     "src.services.market_service",
     "src.services.analysis_service",
+    "src.services.clustering_service",
+    "src.services.supervised_service",
     "src.utils.exceptions",
 )
 
