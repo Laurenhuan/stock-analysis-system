@@ -524,6 +524,40 @@ class TestEndToEnd:
         assert result["profiles"]["cluster"].notna().all()
         assert result["profiles"]["cluster"].isin(range(N_CLUSTERS)).all()
 
+    def test_with_role2_build_common_features(self) -> None:
+        """真实端到端：Role 2 build_common_features → build_stock_profiles → run_clustering。"""
+        from pathlib import Path
+
+        from src.data.features import build_common_features
+
+        # 读取 Role 2 提供的样例数据
+        sample_path = Path("data/sample/sample_daily.csv")
+        if not sample_path.exists():
+            pytest.skip("sample_daily.csv 不存在")
+
+        raw = pd.read_csv(sample_path)
+        # build_common_features 需要 symbol, trade_date, open, high, low, close, volume
+        featured = build_common_features(raw)
+
+        # 验证 Role 2 输出了 return 和 drawdown
+        assert "return" in featured.columns
+        assert "drawdown" in featured.columns
+
+        # 传给 Role 5 的 build_stock_profiles
+        profiles = build_stock_profiles(featured)
+
+        # 5 只股票应产生 5 个 Profile
+        assert len(profiles) == 5
+        assert profiles["symbol"].is_unique
+        assert tuple(profiles.columns[1:]) == FEATURE_COLS
+
+        # 聚类
+        result = run_clustering(profiles)
+        assert set(result.keys()) == set(CLUSTERING_RESULT_KEYS)
+        assert len(result["profiles"]) == 5
+        assert result["profiles"]["cluster"].notna().all()
+        assert result["profiles"]["cluster"].isin(range(N_CLUSTERS)).all()
+
 
 # ── 10 只股票测试 ─────────────────────────────────────
 
