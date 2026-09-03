@@ -1,0 +1,46 @@
+证券金融数据分析与可视化系统
+D3 AI 对话关键提示词记录
+日期：2026-09-03
+工具：Claude Code
+使用者：juanjuan-he（Role 2）
+学号：25151404
+
+说明：以下内容来自当天真实协作对话，保留关键用户提示词与处理结果；未包含密码、Token 或 Cookie。
+
+[用户提示 1]（组长复审 #1：AkShare 数据链路 P0 问题）
+改用官方 ak.stock_zh_a_hist_tx 而非腾讯私有 newfqkline 协议；处理 688 科创板 day/qfqday 且 volume 已是股（不 ×100）；多股票部分成功 + 跨源合并 + 报告缺失代码；收窄异常捕获到网络/超时/HTTP；补 8 类测试。推送原 PR 分支，不新开 PR、不强推。
+
+[处理结果]
+在 feat/akshare-multisource 重做数据链路：腾讯源改官方 stock_zh_a_hist_tx，修 688/sz000 单位边界，实现跨源合并与缺失代码报告，收窄 _RETRYABLE_EXCEPTIONS，补 8 类测试；交叉核对发现并补正官方函数对 sz000 前缀漏 ×100 的 bug；全仓测试通过后提交 cef6ba5 推送原分支。
+
+[用户提示 2]（Role 3 字段语义复核请求）
+Role 3 的 build_eda_insights 依赖以下字段，请复核语义是否符合 Market Data Contract v0.2：return=日收益率 close.pct_change() 首日 NaN；drawdown=回撤 close/历史最高 close-1 恒≤0；close=收盘价；ma5/ma20=5/20 日滚动均线前置 NaN。如语义有出入请指出。
+
+[处理结果]
+逐条核对后确认语义与实现一致，仅在 §5 末尾补充易被误读的细节（滚动窗口/cummax/shift 按 symbol 分组、return 与 pct_change 等价、drawdown 首日 0 且 ≤0、价格前复权口径）。
+
+[用户提示 3]
+需要吧，然后你整合同步到 gitee 上面，方便大家都看到。
+
+[处理结果]
+将字段语义澄清提交到 docs/contracts/market_data.md §5，新建 docs/contract-field-semantics 分支并推送 gitee，开 PR #20 供团队审阅。
+
+[用户提示 4]
+把 PR 开出来吧，我需要同步。
+
+[处理结果]
+通过 gitee API 创建 PR #20（docs/contract-field-semantics → main），确认 PR 已可同步。
+
+[用户提示 5]（组长复审 #2：边界 bug + 补测 + 同步 main）
+(1) 只传 end_date、不传 start_date 时，腾讯默认起点仍按当前年份计算，查询历史 end_date 会出现 start > end，已在线复现 IndexError。请按 end_date 年份计算默认回看起点，增加「只传历史 end_date」测试；建议公共入口校验 start_date <= end_date。
+(2) _fetch_akshare 在日期过滤前就用返回 symbol 集合判断成功，Provider 返回代码但记录全在区间外时不会调用备用源，返回 0 行假成功。请先对每个 Provider 结果完成日期过滤、请求股票过滤和去重，再算 got/remaining；最终合并后再次核对全部请求股票。
+补充测试：只传历史 end_date 东财失败后腾讯仍获正确起止；东财只返回区间外数据时继续调腾讯；双 Provider 只有区间外数据抛 NoDataError 列出缺失代码。另外当前分支落后 main 1 个提交，原分支同步后重跑全仓测试，不新开 PR、不强推。
+
+[处理结果]
+同步 gitee/main（merge 4a78e81）；_default_start 改为按 end 年份回看，公共入口加 start>end 校验抛 DataValidationError；_finalize_daily 加 symbols 过滤参数，_fetch_akshare 先过滤再算 got/remaining 并最终二次核对；补 4 条测试（3 条要求 + 1 条校验）；全仓 274 passed、diff 干净，提交 9adbab1 推原分支。
+
+[用户提示 6]
+你把 D3 做了然后传上去吧。
+
+[处理结果]
+按模板补 daily/25151404/D3.md（回答老师昨日反馈「今日提交中最难的一步」、记录今日目标/实际进展/问题与解决/明日计划）与 prompts/25151404/D3/claude.txt，提交并推送 gitee。
