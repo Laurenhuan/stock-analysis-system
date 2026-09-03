@@ -63,15 +63,6 @@ V1.0 只支持 A 股日频历史行情，不支持分钟、高频或人为生成
 
 滚动窗口必须拥有完整的有效观察值后才产生结果。因此 `ma5` 前 4 个有效观察值、`ma20` 前 19 个有效观察值、`volatility_20d` 前 20 个有效观察值可以为 NaN（`volatility_20d` 基于 `return` 计算，而 `return` 自身有 1 个前置 NaN，故比 `ma20` 多 1 行）。将来如需年化波动率，应新增字段，不得改变 `volatility_20d` 的语义。
 
-### 字段语义澄清
-
-以下说明供 Role 3–5 解读文案时参考，语义与上述定义一致，仅澄清易被误读的细节：
-
-- 滚动窗口、`cummax`、`shift` 均按单一 `symbol` 分组执行，跨股票边界重置；「首日 `return` 为 NaN」指每只股票各自的第一行，而非整个 DataFrame 的第一行。
-- `return` 与 `close.pct_change()` 数值等价（均为 `close_t / close_(t-1) - 1`）。
-- `drawdown` 首日为 0（`cummax` 包含当日自身，故非 NaN），且恒 `<= 0`。
-- 价格字段（`open`/`high`/`low`/`close`）为前复权（qfq）口径，文案应写「前复权收盘价」等，避免与不复权或后复权口径混淆。
-
 ## 6. Missing and invalid data
 
 关键基础字段缺失、非有限数值、单位不明或违反 Contract 时，不得让数据静默进入模型。允许的处理方式是：
