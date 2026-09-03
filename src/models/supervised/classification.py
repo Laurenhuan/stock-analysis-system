@@ -1,11 +1,13 @@
 """Decision-tree classification for next-day direction prediction (Role 4).
 
-Contract v0.3 — features are fixed, errors returned as dicts.
+Contract v0.2 — features are fixed, errors raised as exceptions.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.tree import DecisionTreeClassifier
 
 from src.contracts.supervised import (
@@ -13,9 +15,10 @@ from src.contracts.supervised import (
     ClassificationMetrics,
     ClassificationResult,
 )
+from src.utils.exceptions import DataValidationError, InsufficientDataError
 
 # ---------------------------------------------------------------------------
-# Fixed feature set (Contract v0.3 — not configurable)
+# Fixed feature set (Contract v0.2 — not configurable)
 # ---------------------------------------------------------------------------
 
 FEATURE_NAMES: list[str] = [
@@ -28,22 +31,46 @@ FEATURE_NAMES: list[str] = [
 
 _REQUIRED_INPUT_COLS = ("trade_date", "close", "volume")
 
-_MIN_SAMPLES = 30  # minimum rows after feature engineering
+# Minimum samples after feature engineering.
+# Rationale: with max_depth=3 and min_samples_leaf=20, the tree needs at
+# least ~60 training samples to form a meaningful structure (3 levels × 20
+# leaves).  30 samples as a hard floor catches obviously insufficient data
+# before the split, while the train/test split (80/20) ensures the training
+# set has ~24+ samples for a basic fit.  This is a safety net, not a
+# substitute for checking train/test emptiness after the split.
+_MIN_SAMPLES = 30
 
 
 # ---------------------------------------------------------------------------
-# Error code constants
+# Validation helpers (private)
 # ---------------------------------------------------------------------------
 
-class ErrorCode:
-    MISSING_COLUMNS = "MISSING_COLUMNS"
-    UNSORTED_DATE = "UNSORTED_DATE"
-    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
+def _validate_input(df: pd.DataFrame) -> None:
+    """Validate raw input DataFrame before feature engineering.
 
-def _error(status: str, code: str, message: str) -> dict:
-    """Build a standard error response dict."""
-    return {"status": status, "data": None, "code": code, "message": message}
+    Raises DataValidationError for structural issues.
+    """
+    if df.empty:
+        raise DataValidationError("Input DataFrame is empty")
+
+    missing = set(_REQUIRED_INPUT_COLS) - set(df.columns)
+    if missing:
+        raise DataValidationError(
+            f"Missing required columns: {sorted(missing)}"
+        )
+
+    if not df["trade_date"].is_monotonic_increasing:
+        raise DataValidationError(
+            "DataFrame must be sorted by trade_date ascending"
+        )
+
+    # Check for non-finite values in numeric columns
+    for col in ("close", "volume"):
+        if not np.isfinite(df[col]).all():
+            raise DataValidationError(
+                f"Column '{col}' contains NaN or infinite values"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +89,9 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- basic returns ---
     data["return"] = data["close"].pct_change()
+    # Replace inf/-inf from pct_change (when close=0) with NaN, then drop
+    data["return"] = data["return"].replace([np.inf, -np.inf], np.nan)
+
     data["return_lag1"] = data["return"].shift(1)
     data["return_lag2"] = data["return"].shift(2)
 
@@ -73,12 +103,15 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- volatility & volume ---
     data["volatility_20d"] = data["return"].rolling(window=20).std()
     data["volume_change"] = data["volume"].pct_change()
+    data["volume_change"] = data["volume_change"].replace(
+        [np.inf, -np.inf], np.nan
+    )
 
     # --- label: next-day direction (model-private) ---
     data["next_return"] = data["return"].shift(-1)
     data["label"] = (data["next_return"] > 0).astype(int)
 
-    # Drop rows with NaN (from lag/rolling) and the last row (no next_return)
+    # Drop rows with NaN (from lag/rolling/inf) and the last row (no next_return)
     data = data.dropna(subset=FEATURE_NAMES + ["label"])
     data = data[data["next_return"].notna()]
 
@@ -90,10 +123,7 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def run_classification(
-    df: pd.DataFrame,
-    train_ratio: float = 0.8,
-) -> ClassificationResult | dict:
+def run_classification(df: pd.DataFrame) -> ClassificationResult:
     """Train a DecisionTreeClassifier and evaluate on a time-ordered test set.
 
     Parameters
@@ -102,48 +132,47 @@ def run_classification(
         Raw market data for a **single** stock.  Must contain at least
         ``trade_date``, ``close``, ``volume``.  Rows must be sorted by
         ``trade_date`` ascending.
-    train_ratio : float
-        Fraction of data used for training (time-ordered split, default 0.8).
 
     Returns
     -------
-    ClassificationResult | dict
-        On success: dict with keys model, feature_names, metrics, predictions.
-        On error: dict with keys status="error", data=None, code, message.
+    ClassificationResult
+        Dict with keys model, feature_names, metrics, predictions.
+
+    Raises
+    ------
+    DataValidationError
+        If required columns are missing, data is not sorted, or
+        non-finite values are found in close/volume.
+    InsufficientDataError
+        If not enough samples remain after feature engineering, or
+        if train/test set is empty after the split.
     """
     # --- validate input ---
-    missing = set(_REQUIRED_INPUT_COLS) - set(df.columns)
-    if missing:
-        return _error(
-            "error",
-            ErrorCode.MISSING_COLUMNS,
-            f"Missing required columns: {sorted(missing)}",
-        )
-
-    if not df["trade_date"].is_monotonic_increasing:
-        return _error(
-            "error",
-            ErrorCode.UNSORTED_DATE,
-            "DataFrame must be sorted by trade_date ascending",
-        )
+    _validate_input(df)
 
     # --- feature engineering ---
     data = _build_features(df)
 
     if len(data) < _MIN_SAMPLES:
-        return _error(
-            "error",
-            ErrorCode.INSUFFICIENT_DATA,
-            f"Need at least {_MIN_SAMPLES} samples, got {len(data)}",
+        raise InsufficientDataError(
+            f"Need at least {_MIN_SAMPLES} samples after feature engineering, "
+            f"got {len(data)}"
         )
 
-    # --- time-ordered split ---
+    # --- time-ordered 80/20 split (Contract v0.2: fixed ratio) ---
     X = data[FEATURE_NAMES]
     y = data["label"]
 
-    split_idx = int(len(X) * train_ratio)
+    split_idx = int(len(X) * 0.8)
+
+    if split_idx == 0:
+        raise InsufficientDataError("Training set is empty after split")
+
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+    if len(X_test) == 0:
+        raise InsufficientDataError("Test set is empty after split")
 
     # --- train ---
     model = DecisionTreeClassifier(
@@ -157,8 +186,6 @@ def run_classification(
     y_pred = model.predict(X_test)
 
     # --- metrics ---
-    from sklearn.metrics import accuracy_score, confusion_matrix
-
     acc = accuracy_score(y_test, y_pred)
     cm = confusion_matrix(y_test, y_pred, labels=[0, 1]).tolist()
 
@@ -183,76 +210,3 @@ def run_classification(
         "metrics": metrics,
         "predictions": predictions,
     }
-
-
-# ---------------------------------------------------------------------------
-# Demo: run directly to see the decision tree
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    from sklearn.tree import plot_tree
-    import matplotlib.pyplot as plt
-
-    # ---- 读取假数据 ----
-    csv_path = r"C:\Users\zhouc\WorkBuddy\2026-09-02-08-57-05\fake_data\fake_stock_000001_seed1.csv"
-    df = pd.read_csv(csv_path, encoding="utf-8-sig")
-
-    # 适配列名：date → trade_date
-    df.rename(columns={"date": "trade_date"}, inplace=True)
-
-    # CSV 缺 volume 列，用 1.0 占位（run_classification 内部会重新算 volume_change）
-    if "volume" not in df.columns:
-        df["volume"] = 1.0
-
-    # 删除最后一行（next_direction 为空）
-    df.dropna(subset=["next_direction"], inplace=True)
-    df["next_direction"] = df["next_direction"].astype(int)
-
-    print(f"数据量: {len(df)} 行")
-    print(f"列: {list(df.columns)}")
-
-    # ---- 直接用预计算特征训练（不重复算） ----
-    import numpy as np
-    from sklearn.tree import DecisionTreeClassifier
-    from sklearn.metrics import accuracy_score, confusion_matrix
-
-    feature_cols = ["return_lag1", "return_lag2", "ma_diff", "volatility_20d", "volume_change"]
-    X = df[feature_cols]
-    y = df["next_direction"]
-
-    # 时间顺序 80/20 切分
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-    print(f"训练集: {len(X_train)} 样本, 测试集: {len(X_test)} 样本")
-    print(f"训练集时间: {df['trade_date'].iloc[0]} ~ {df['trade_date'].iloc[split_idx-1]}")
-    print(f"测试集时间: {df['trade_date'].iloc[split_idx]} ~ {df['trade_date'].iloc[-1]}")
-
-    # 训练
-    model = DecisionTreeClassifier(max_depth=3, min_samples_leaf=20, random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    # 评价
-    acc = accuracy_score(y_test, y_pred)
-    cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
-
-    print(f"\n===== 分类结果 =====")
-    print(f"Accuracy: {acc:.4f}")
-    print(f"Confusion Matrix:\n{cm}")
-
-    # ---- 画决策树 ----
-    plt.figure(figsize=(16, 8), dpi=120)
-    plot_tree(
-        model,
-        feature_names=feature_cols,
-        class_names=["Down (0)", "Up (1)"],
-        filled=True,
-        rounded=True,
-        fontsize=10,
-    )
-    plt.title("Decision Tree — fake_stock_000001", fontsize=14)
-    plt.tight_layout()
-    plt.savefig("decision_tree.png", dpi=150, bbox_inches="tight")
-    print("\n决策树已保存到 decision_tree.png")

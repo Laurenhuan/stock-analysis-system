@@ -1,21 +1,20 @@
-"""Unit tests for src/models/supervised/classification.py (Role 4, Contract v0.3)."""
+"""Unit tests for src/models/supervised/classification.py (Role 4, Contract v0.2)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.tree import DecisionTreeClassifier
 
-from src.models.supervised.classification import (
-    FEATURE_NAMES,
-    ErrorCode,
-    run_classification,
-)
+from src.models.supervised.classification import FEATURE_NAMES, run_classification
+from src.utils.exceptions import DataValidationError, InsufficientDataError
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_df(n: int = 200, seed: int = 42) -> pd.DataFrame:
     """Generate synthetic single-stock OHLCV data sorted by trade_date."""
@@ -23,18 +22,13 @@ def _make_df(n: int = 200, seed: int = 42) -> pd.DataFrame:
     dates = pd.bdate_range("2024-01-01", periods=n)
     price = 100 + np.cumsum(rng.randn(n) * 0.5)
     volume = rng.randint(1000, 5000, size=n).astype(float)
-    return pd.DataFrame(
-        {
-            "trade_date": dates,
-            "close": price,
-            "volume": volume,
-        }
-    )
+    return pd.DataFrame({"trade_date": dates, "close": price, "volume": volume})
 
 
 # ---------------------------------------------------------------------------
 # Normal behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestRunClassificationNormal:
     """Happy-path tests for run_classification."""
@@ -42,31 +36,45 @@ class TestRunClassificationNormal:
     def test_returns_expected_keys(self) -> None:
         df = _make_df()
         result = run_classification(df)
-        assert set(result.keys()) == {"model", "feature_names", "metrics", "predictions"}
+        assert set(result.keys()) == {
+            "model",
+            "feature_names",
+            "metrics",
+            "predictions",
+        }
 
-    def test_status_is_not_error(self) -> None:
+    def test_model_is_fitted_decision_tree(self) -> None:
         df = _make_df()
         result = run_classification(df)
-        assert "status" not in result  # success result has no status key
+        assert isinstance(result["model"], DecisionTreeClassifier)
+        # Check the model has been fitted (has tree_ attribute)
+        assert hasattr(result["model"], "tree_")
+
+    def test_feature_names_order_matches_training_matrix(self) -> None:
+        df = _make_df()
+        result = run_classification(df)
+        # feature_names should be exactly the fixed FEATURE_NAMES
+        assert result["feature_names"] == FEATURE_NAMES
 
     def test_metrics_contain_accuracy_and_cm(self) -> None:
         df = _make_df()
         result = run_classification(df)
         assert "accuracy" in result["metrics"]
         assert "confusion_matrix" in result["metrics"]
-        assert 0.0 <= result["metrics"]["accuracy"] <= 1.0
 
-    def test_confusion_matrix_is_2x2(self) -> None:
+    def test_accuracy_in_valid_range(self) -> None:
+        df = _make_df()
+        result = run_classification(df)
+        acc = result["metrics"]["accuracy"]
+        assert 0.0 <= acc <= 1.0
+
+    def test_confusion_matrix_is_2x2_integer(self) -> None:
         df = _make_df()
         result = run_classification(df)
         cm = result["metrics"]["confusion_matrix"]
         assert len(cm) == 2
         assert all(len(row) == 2 for row in cm)
-
-    def test_confusion_matrix_values_are_non_negative_integers(self) -> None:
-        df = _make_df()
-        result = run_classification(df)
-        for row in result["metrics"]["confusion_matrix"]:
+        for row in cm:
             for val in row:
                 assert isinstance(val, (int, np.integer))
                 assert val >= 0
@@ -82,48 +90,54 @@ class TestRunClassificationNormal:
         result = run_classification(df)
         assert not result["predictions"].isnull().any().any()
 
-    def test_predictions_labels_are_0_or_1(self) -> None:
+    def test_predictions_labels_are_binary(self) -> None:
         df = _make_df()
         result = run_classification(df)
         preds = result["predictions"]
         assert set(preds["y_true"].unique()).issubset({0, 1})
         assert set(preds["y_pred"].unique()).issubset({0, 1})
 
-    def test_feature_names_are_fixed(self) -> None:
-        df = _make_df()
-        result = run_classification(df)
-        assert result["feature_names"] == FEATURE_NAMES
-
-    def test_feature_names_match_contract(self) -> None:
-        expected = ["return_lag1", "return_lag2", "ma_diff", "volatility_20d", "volume_change"]
-        assert FEATURE_NAMES == expected
-
 
 # ---------------------------------------------------------------------------
-# Time-series split
+# Time-series split (fixed 80/20)
 # ---------------------------------------------------------------------------
+
 
 class TestTimeSeriesSplit:
-    """Ensure the 80/20 time-ordered split works correctly."""
+    """Ensure the fixed 80/20 time-ordered split works correctly."""
 
     def test_train_before_test(self) -> None:
         df = _make_df()
-        result = run_classification(df, train_ratio=0.8)
+        result = run_classification(df)
         preds = result["predictions"]
+        # All predicted trade_dates should be in the latest 20% of dates
         all_dates = sorted(df["trade_date"].values)
         cutoff = all_dates[int(len(all_dates) * 0.8)]
         assert (preds["trade_date"] >= cutoff).all()
 
-    def test_split_ratio_respected(self) -> None:
+    def test_split_index_exact(self) -> None:
+        """split_index = int(n_samples * 0.8) exactly."""
         df = _make_df(n=300)
-        result = run_classification(df, train_ratio=0.7)
+        result = run_classification(df)
+        # After feature engineering, we lose ~20 rows (rolling window)
+        # Test set should be roughly 20% of processed data
         n_pred = len(result["predictions"])
-        assert 50 < n_pred < 120  # rough sanity band
+        # Processed data is ~280 rows, 20% = ~56
+        assert 40 < n_pred < 80
+
+    def test_predictions_dates_are_last_20_percent(self) -> None:
+        """Prediction dates should equal the last 20% of processed data dates."""
+        df = _make_df()
+        result = run_classification(df)
+        preds = result["predictions"]
+        # Predictions should be in chronological order
+        assert preds["trade_date"].is_monotonic_increasing
 
 
 # ---------------------------------------------------------------------------
 # Last row removal
 # ---------------------------------------------------------------------------
+
 
 class TestLastRowRemoved:
     """The very last row must be dropped because next_return is unavailable."""
@@ -136,26 +150,77 @@ class TestLastRowRemoved:
 
 
 # ---------------------------------------------------------------------------
-# Error paths (returned as dicts, not raised)
+# Determinism / reproducibility
 # ---------------------------------------------------------------------------
+
+
+class TestReproducibility:
+    """Same input should produce the same output."""
+
+    def test_same_input_same_output(self) -> None:
+        df = _make_df()
+        r1 = run_classification(df)
+        r2 = run_classification(df)
+        assert r1["metrics"]["accuracy"] == r2["metrics"]["accuracy"]
+        assert r1["metrics"]["confusion_matrix"] == r2["metrics"]["confusion_matrix"]
+        pd.testing.assert_frame_equal(r1["predictions"], r2["predictions"])
+
+    def test_input_dataframe_unchanged(self) -> None:
+        """The original input DataFrame must not be mutated."""
+        df = _make_df()
+        original_cols = set(df.columns)
+        original_len = len(df)
+        run_classification(df)
+        assert set(df.columns) == original_cols
+        assert len(df) == original_len
+
+    def test_private_fields_not_written_to_input(self) -> None:
+        """next_return, label, return must not appear in the input DataFrame."""
+        df = _make_df()
+        run_classification(df)
+        private_fields = {"next_return", "label", "return", "return_lag1",
+                          "return_lag2", "ma5", "ma20", "ma_diff",
+                          "volatility_20d", "volume_change"}
+        assert private_fields.isdisjoint(set(df.columns))
+
+
+# ---------------------------------------------------------------------------
+# Error paths (exceptions, not dicts)
+# ---------------------------------------------------------------------------
+
 
 class TestErrors:
 
-    def test_missing_columns_returns_error(self) -> None:
-        df = pd.DataFrame({"trade_date": [], "close": []})  # missing volume
-        result = run_classification(df)
-        assert result["status"] == "error"
-        assert result["code"] == ErrorCode.MISSING_COLUMNS
-        assert result["data"] is None
+    def test_missing_columns_raises(self) -> None:
+        df = pd.DataFrame(
+            {"trade_date": pd.to_datetime(["2024-01-01"]), "close": [100.0]}
+        )
+        with pytest.raises(DataValidationError, match="Missing required columns"):
+            run_classification(df)
 
-    def test_unsorted_date_returns_error(self) -> None:
+    def test_unsorted_date_raises(self) -> None:
         df = _make_df().sort_values("trade_date", ascending=False)
-        result = run_classification(df)
-        assert result["status"] == "error"
-        assert result["code"] == ErrorCode.UNSORTED_DATE
+        with pytest.raises(DataValidationError, match="sorted by trade_date"):
+            run_classification(df)
 
-    def test_too_few_samples_returns_error(self) -> None:
-        df = _make_df(n=15)  # well below _MIN_SAMPLES
-        result = run_classification(df)
-        assert result["status"] == "error"
-        assert result["code"] == ErrorCode.INSUFFICIENT_DATA
+    def test_empty_dataframe_raises(self) -> None:
+        df = pd.DataFrame(columns=["trade_date", "close", "volume"])
+        with pytest.raises(DataValidationError, match="empty"):
+            run_classification(df)
+
+    def test_non_finite_close_raises(self) -> None:
+        df = _make_df()
+        df.loc[100, "close"] = np.inf
+        with pytest.raises(DataValidationError, match="NaN or infinite"):
+            run_classification(df)
+
+    def test_non_finite_volume_raises(self) -> None:
+        df = _make_df()
+        df.loc[100, "volume"] = np.nan
+        with pytest.raises(DataValidationError, match="NaN or infinite"):
+            run_classification(df)
+
+    def test_too_few_samples_raises(self) -> None:
+        df = _make_df(n=15)
+        with pytest.raises(InsufficientDataError):
+            run_classification(df)

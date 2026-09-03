@@ -11,9 +11,9 @@
 
 ### 2. 分类模块实现
 - 重写 src/models/supervised/classification.py
-- 函数签名：run_classification(df, train_ratio=0.8) -> ClassificationResult | dict
+- 函数签名：run_classification(df) -> ClassificationResult
 - 特征集固定：return_lag1, return_lag2, ma_diff, volatility_20d, volume_change
-- 错误处理：返回 dict（status, code, message），不 raise 异常
+- 错误处理：使用 DataValidationError 和 InsufficientDataError 异常
 - 模型参数：max_depth=3, min_samples_leaf=20
 
 ### 3. 测试编写
@@ -21,34 +21,24 @@
 - test_classification_leakage.py：4 个测试
 - 共 20 个测试全部通过
 
-### 4. Contract v0.2 → v0.3 适配
-- 删除 feature_cols 参数
-- 错误改为 dict 返回
-- 函数签名简化
-
-### 5. 决策树优化
-- WorkBuddy 审查：过拟合、树太深、可读性差
-- 解决：max_depth 4→3，新增 min_samples_leaf=20
-- 效果：叶子从十几个减到 7 个，最小样本 20
-
-### 6. 假数据验证
+### 4. 假数据验证
 - 使用 fake_stock_000001_seed1.csv（399 行）
 - Accuracy=0.6125
 - 决策树可视化保存为 decision_tree.png
 
-### 7. 每日提交
-- 创建 daily/25151407/D1.md 日报
-- 创建 prompts/D1/ 目录
+### 5. 每日提交
+- 创建 daily/25151419/D1.md 日报
+- 创建 prompts/25151419/D1/ 目录
 - 同步远端最新代码，解决 D1.md 冲突
 
 ## 关键决策
 1. 特征集不做参数化，固定 5 个特征
-2. 错误处理用 dict 返回，不用 raise
+2. 错误处理使用异常抛出，符合 Contract v0.2
 3. max_depth=3 平衡可解释性与防过拟合
 4. min_samples_leaf=20 防止叶子节点过小
 
 ## 遇到的问题
-1. Contract v0.2→v0.3 适配：重新阅读文档，确认三个变更
+1. Contract 版本对齐：重新阅读文档，确认应使用 v0.2 异常抛出方式
 2. 决策树过拟合：降低深度，增加叶子最小样本数
 3. matplotlib 终端不可视化：改为 savefig 保存图片
 4. D1.md 合并冲突：保留个人版本，按学号重组目录
