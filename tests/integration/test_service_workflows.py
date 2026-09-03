@@ -7,6 +7,7 @@ from src.services import (
     build_eda_dashboard,
     get_sample_symbols,
     load_market_data,
+    run_classification_dashboard,
     run_regression_dashboard,
     run_stock_clustering,
 )
@@ -22,13 +23,51 @@ def test_eda_service_builds_tables_and_figures(sample_market_data) -> None:
     selected = sample_market_data[
         sample_market_data["symbol"].isin(get_sample_symbols()[:3])
     ]
-    dashboard = build_eda_dashboard(selected)
+    candle_symbol = get_sample_symbols()[1]
+    dashboard = build_eda_dashboard(
+        selected, candlestick_symbol=candle_symbol
+    )
 
     assert dashboard["date_ranges"].shape[0] == 3
     assert dashboard["risk_return"].shape[0] == 3
     assert dashboard["correlation"].shape == (3, 3)
+    assert dashboard["insights"]
+    assert all(
+        "不构成投资建议" in insight["caveat"]
+        for insight in dashboard["insights"]
+    )
     assert isinstance(dashboard["price_figure"], Figure)
+    assert isinstance(dashboard["candlestick_figure"], Figure)
+    assert dashboard["candlestick_figure"].data[0].name == candle_symbol
     assert isinstance(dashboard["correlation_figure"], Figure)
+
+
+def test_classification_service_runs_role4_and_role3_figure(
+    sample_market_data,
+) -> None:
+    symbol = get_sample_symbols()[0]
+    dashboard = run_classification_dashboard(
+        sample_market_data, symbol=symbol
+    )
+    result = dashboard["result"]
+
+    assert set(result["metrics"]) == {"accuracy", "confusion_matrix"}
+    assert 0.0 <= result["metrics"]["accuracy"] <= 1.0
+    assert len(result["metrics"]["confusion_matrix"]) == 2
+    assert list(result["predictions"].columns) == [
+        "trade_date",
+        "y_true",
+        "y_pred",
+    ]
+    assert len(result["predictions"]) >= 2
+    assert isinstance(dashboard["confusion_matrix_figure"], Figure)
+
+
+def test_classification_service_rejects_symbol_outside_input(
+    sample_market_data,
+) -> None:
+    with pytest.raises(NoDataError, match="未找到股票"):
+        run_classification_dashboard(sample_market_data, symbol="999999.SH")
 
 
 def test_regression_service_runs_role6_and_role3_figure(sample_market_data) -> None:

@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from src.contracts.market_data import BASE_MARKET_COLUMNS, COMMON_FEATURE_COLUMNS
@@ -11,6 +12,7 @@ from src.services.market_service import (
     get_sample_date_bounds,
     get_sample_symbols,
     load_market_data,
+    load_realtime_quotes,
 )
 from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoDataError
 
@@ -34,7 +36,48 @@ def test_market_service_preserves_sample_provenance() -> None:
 
     assert get_market_metadata(result) == {
         "data_source": "sample",
+        "provider": "sample",
+        "fetched_at": None,
         "is_sample": True,
+        "fallback_reason": None,
+    }
+
+
+def test_realtime_service_preserves_independent_schema_and_provenance(
+    monkeypatch,
+) -> None:
+    expected_columns = [
+        "symbol", "name", "price", "change", "pct_change", "prev_close",
+        "open", "high", "low", "volume", "amount", "timestamp",
+    ]
+    quotes = pd.DataFrame(
+        [[
+            "600519.SH", "贵州茅台", 1500.0, 10.0, 0.67, 1490.0,
+            1495.0, 1510.0, 1480.0, 1000.0, 1500000.0,
+            pd.Timestamp("2026-09-03 10:00:00"),
+        ]],
+        columns=expected_columns,
+    )
+    quotes.attrs.update(
+        data_source="akshare_sina",
+        provider="sina",
+        fetched_at="2026-09-03T10:00:01+08:00",
+        is_sample=False,
+    )
+
+    monkeypatch.setattr(
+        "src.services.market_service.fetch_realtime_quotes",
+        lambda symbols: quotes,
+    )
+
+    result = load_realtime_quotes("600519.SH")
+
+    assert list(result.columns) == expected_columns
+    assert get_market_metadata(result) == {
+        "data_source": "akshare_sina",
+        "provider": "sina",
+        "fetched_at": "2026-09-03T10:00:01+08:00",
+        "is_sample": False,
         "fallback_reason": None,
     }
 

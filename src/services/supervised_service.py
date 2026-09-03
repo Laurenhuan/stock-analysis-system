@@ -7,10 +7,18 @@ from typing import TypedDict
 from pandas import DataFrame
 from plotly.graph_objects import Figure
 
-from src.contracts.supervised import RegressionResult
+from src.contracts.supervised import ClassificationResult, RegressionResult
+from src.models.supervised.classification import run_classification
 from src.models.supervised.regression import fit_regression
 from src.utils.exceptions import NoDataError
-from src.visualization.charts import plot_actual_vs_predicted
+from src.visualization.charts import plot_actual_vs_predicted, plot_confusion_matrix
+
+
+class ClassificationDashboard(TypedDict):
+    """Stable classification result and its Role 3 visualization."""
+
+    result: ClassificationResult
+    confusion_matrix_figure: Figure
 
 
 class RegressionDashboard(TypedDict):
@@ -18,6 +26,26 @@ class RegressionDashboard(TypedDict):
 
     result: RegressionResult
     actual_vs_predicted_figure: Figure
+
+
+def run_classification_dashboard(
+    data: DataFrame,
+    *,
+    symbol: str,
+) -> ClassificationDashboard:
+    """Filter one stock, run Role 4 classification and build its result figure."""
+    selected = data[data["symbol"] == symbol].copy()
+    if selected.empty:
+        raise NoDataError(f"未找到股票 {symbol} 的分类输入数据")
+    result = run_classification(selected)
+    return ClassificationDashboard(
+        result=result,
+        confusion_matrix_figure=plot_confusion_matrix(
+            result["metrics"]["confusion_matrix"],
+            labels=("非上涨", "上涨"),
+            title=f"{symbol} 测试集混淆矩阵",
+        ),
+    )
 
 
 def run_regression_dashboard(
