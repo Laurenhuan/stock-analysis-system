@@ -1,0 +1,45 @@
+# D2 Claude Code 对话记录
+# 日期：2026-09-03
+# 角色：Role 4 - 监督学习分类
+
+## 对话摘要
+
+### 1. PR Review 修复（10 个 P0 问题）
+- 收到完整的 PR 审查反馈，包含 10 个 P0 项
+- 逐项修复：恢复课程记录、Contract v0.2 对齐、异常处理、数据验证、测试加强
+- 使用 plan mode 制定修复计划，然后执行
+
+### 2. 关键修复内容
+- 删除 ErrorCode 类和 _error() 辅助函数
+- 异常从 return dict 改为 raise DataValidationError/InsufficientDataError
+- 移除 train_ratio 参数，固定 80/20 切分
+- 删除 __main__ 演示代码（含 C:\Users\zhouc\ 绝对路径）
+- 补全数据验证：空 DataFrame、NaN、inf、非有限值
+- 加强泄漏测试：精确 split_index、标签对齐、输入不变性
+- 补充完整性测试：模型拟合、确定性、CM 标签顺序
+
+### 3. 测试结果
+- Role 4 单元测试：31 passed, 0 failed
+- 全量测试：除 plotly 依赖外全部通过
+
+### 4. Role 3 契约确认
+- aaaspringaaa 询问 Contract 版本（v0.3 vs v0.2）
+- 确认代码已对齐 v0.2，未修改共享契约
+- 输出结构：predictions 列 ("trade_date","y_true","y_pred")，CM 2×2 [0,1]
+
+### 5. 同步中央仓库
+- 合并 gitee/main 最新代码
+- pip install plotly
+- 启动 Streamlit 网页验证
+
+## 关键决策
+1. 严格对齐已批准的 Contract v0.2，不自行升级
+2. 异常处理使用 raise，由 Service Layer 转换为 UI 提示
+3. 固定 80/20 切分，可变比例作为 P1 后续支持
+4. 课程记录仅操作自己学号目录，不触碰他人文件
+
+## 遇到的问题
+1. PR 被打回 10 个 P0：逐项修复，恢复课程记录 + 代码对齐 v0.2
+2. Role 3 契约版本疑问：确认未修改共享契约，输出结构兼容
+3. Streamlit 启动失败：安装 plotly，指定端口避开冲突
+4. git diff --exit-code 返回非零：因为新增了自己的课程记录（允许的）
