@@ -166,3 +166,56 @@ def test_realtime_never_writes_local_csv(monkeypatch):
 
     df = fetch_realtime_quotes("600519.SH")
     assert df.attrs["data_source"] == "akshare_eastmoney"
+
+
+def test_realtime_partial_success_merges_providers(monkeypatch):
+    """东方财富只返回部分股票时，新浪只补缺失股票，最终合并。"""
+    import akshare
+
+    em_only = _em_spot_frame().iloc[[0]]  # 只含 600519.SH
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: em_only)
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", lambda: _sina_spot_frame())
+
+    df = fetch_realtime_quotes(["600519.SH", "000001.SZ"])
+    assert set(df["symbol"]) == {"600519.SH", "000001.SZ"}
+    assert df.attrs["data_source"] == "akshare_mixed"
+    assert df.attrs["provider"] == "eastmoney+sina"
+
+
+def test_realtime_reports_missing_symbols(monkeypatch):
+    """两个 Provider 都缺某只股票时，必须明确报告缺失代码。"""
+    import akshare
+
+    em_only = _em_spot_frame().iloc[[0]]       # 只有 600519.SH
+    sina_only = _sina_spot_frame().iloc[[0]]   # 只有 600519.SH
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: em_only)
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", lambda: sina_only)
+
+    with pytest.raises(NoDataError) as excinfo:
+        fetch_realtime_quotes(["600519.SH", "000001.SZ"])
+    assert "000001.SZ" in str(excinfo.value)
+
+
+def test_realtime_pct_change_is_percent_not_decimal(monkeypatch):
+    """涨跌幅（pct_change）单位为百分比：0.20 表示 +0.20%，绝不换算成小数 0.002。"""
+    import akshare
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: _em_spot_frame())
+
+    df = fetch_realtime_quotes("600519.SH")
+    row = df.iloc[0]
+    assert row["pct_change"] == pytest.approx(0.20)
+    # 涨跌额为绝对值（元），与涨跌幅相互独立
+    assert row["change"] == pytest.approx(2.59)
+
+
+def test_realtime_sina_pct_change_also_percent(monkeypatch):
+    """新浪源的涨跌幅同样是百分比，不换算。"""
+    import akshare
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: (_ for _ in ()).throw(ConnectionError("em down")))
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", lambda: _sina_spot_frame())
+
+    df = fetch_realtime_quotes("000001.SZ")
+    row = df.iloc[0]
+    assert row["pct_change"] == pytest.approx(-1.2)  # 百分比，非 -0.012

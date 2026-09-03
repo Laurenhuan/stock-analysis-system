@@ -6,13 +6,20 @@ intermittently unavailable does not break queries:
 
 - primary  : AkShare ``stock_zh_a_hist`` (eastmoney, 前复权 ``qfq``, 10s timeout,
              2 retries with backoff)
-- fallback : Tencent's ``newfqkline`` qfq endpoint (called directly, see note
-             below), same daily ``qfq`` and ``sh600519`` / ``sz000001`` codes
+- fallback : AkShare ``stock_zh_a_hist_tx`` (Tencent, 前复权 ``qfq``). We use the
+             official AkShare wrapper instead of maintaining Tencent's private
+             ``newfqkline`` protocol directly.
 
 Realtime quotes are exposed separately via ``fetch_realtime_quotes``
 (eastmoney ``stock_zh_a_spot_em`` → sina ``stock_zh_a_spot``). Online results are
 never written to a local CSV; only the fixed Sample fallback reads the committed
 ``data/sample`` file.
+
+When several symbols are requested, each provider may return only a subset. The
+fetchers therefore compare the actually-returned symbol set against the request,
+call the next provider only for the missing symbols, merge the results, and raise
+``NoDataError`` listing any still-missing codes — a partial result is never
+reported as complete success.
 
 Data-source semantics (``source`` parameter):
 
@@ -30,26 +37,29 @@ Provenance (``df.attrs``) so the Service layer can tell the origin without extra
 columns:
 
 - ``data_source``     -> ``"sample"`` | ``"tushare"`` | ``"akshare_eastmoney"``
-                         | ``"akshare_tencent"`` (daily), or
-                         ``"akshare_eastmoney"`` | ``"akshare_sina"`` (realtime)
+                         | ``"akshare_tencent"`` | ``"akshare_mixed"`` (daily), or
+                         ``"akshare_eastmoney"`` | ``"akshare_sina"`` |
+                         ``"akshare_mixed"`` (realtime)
 - ``provider``        -> ``"sample"`` | ``"tushare"`` | ``"eastmoney"`` |
-                         ``"tencent"`` | ``"sina"``
+                         ``"tencent"`` | ``"sina"``, or ``"eastmoney+tencent"`` /
+                         ``"eastmoney+sina"`` when a request was merged across
+                         providers.
 - ``is_sample``       -> ``True`` | ``False``
 - ``fetched_at``      -> ISO-8601 UTC timestamp of the fetch (not set for Sample)
 - ``fallback_reason`` -> only set when ``source="auto"`` fell back to sample.
 
 .. note::
-    AkShare's ``stock_zh_a_hist_tx`` mislabels the 6th column of Tencent's qfq
-    kline (volume in 手) as ``"amount"`` and, via ``iloc[:, :6]``, drops the real
-    amount column. Tencent's raw ``newfqkline`` rows are
-    ``[date, open, close, high, low, volume(手), {}, turnover, amount(万元), ""]``.
-    We therefore call that endpoint directly and convert volume 手→股 (×100) and
-    amount 万元→元 (×10000) so the result matches the Market Data Contract.
+    AkShare ``stock_zh_a_hist_tx`` returns ``volume`` (股) and ``amount`` (元)
+    directly. One known upstream quirk is corrected here: in akshare 1.18.94 the
+    function skips the 手→股 ×100 for ``sz000``-prefixed codes (it misclassifies
+    them as indices), so 深市主板 ``000xxx`` volume is left in 手. Reproducible:
+    ``stock_zh_a_hist_tx("sz000001", "2024-01-01", "2024-01-05", "qfq")`` returns
+    volume ``1158366`` (手) while the authoritative value is ``115836645`` (股).
+    ``_convert_tencent`` therefore multiplies 000xxx volume by 100.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -83,6 +93,13 @@ _FALLBACK_HINTS = (
 
 _NETWORK_HINTS = ("connection", "reset", "timeout", "refused", "recv", "network")
 
+# 网络 / 连接 / 超时 / HTTP 类错误。只有这些错误允许重试或跨 Provider 降级；字段
+# 映射、JSON 结构、程序错误（KeyError / TypeError / DataValidationError 等）不得
+# 被静默吞掉，必须向上抛出。
+# 说明：requests 的所有异常（RequestException/HTTPError/Timeout/ConnectionError）
+# 均为 OSError 的子类，故 OSError 已覆盖连接、超时与 HTTP 失败。
+_RETRYABLE_EXCEPTIONS = (ConnectionError, TimeoutError, OSError)
+
 # AkShare ``stock_zh_a_hist`` 输出为中文列名；成交量单位为“手”（1 手 = 100 股），
 # 成交额单位已经是“元”。列名映射、.SH/.SZ 补全与成交量换算在此完成，返回标准 Schema。
 _AKSHARE_COLUMN_MAP = {
@@ -97,15 +114,32 @@ _AKSHARE_COLUMN_MAP = {
 }
 _AKSHARE_LOT_TO_SHARES = 100
 
-# Tencent ``newfqkline`` qfq endpoint and its unit factors.
-_TENCENT_URL = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
-_TENCENT_VOLUME_TO_SHARES = 100   # 手 → 股
-_TENCENT_AMOUNT_TO_YUAN = 10000   # 万元 → 元
-_TENCENT_TIMEOUT = 10.0
-_TENCENT_MIN_YEAR = 1990          # 未指定起始日期时的最早回看年份
+# 官方 stock_zh_a_hist_tx 的列名映射（volume 已是股、amount 已是元，turnover 丢弃）。
+_TX_COLUMN_MAP = {
+    "date": "trade_date",
+    "open": "open",
+    "close": "close",
+    "high": "high",
+    "low": "low",
+    "volume": "volume",
+    "amount": "amount",
+}
 
 _EASTMONEY_TIMEOUT = 10.0
 _EASTMONEY_MAX_RETRIES = 2
+
+_TENCENT_TIMEOUT = 10.0
+_TENCENT_MAX_RETRIES = 1
+# 未传起始日期时，官方 stock_zh_a_hist_tx 按年逐段请求；回看窗口过大会导致请求量
+# 膨胀。这里限制默认回看年数，作为请求数量保护。
+_TENCENT_DEFAULT_LOOKBACK_YEARS = 2
+
+# provider 名 → daily/realtime ``data_source`` 取值。
+_AKSHARE_SOURCE_BY_PROVIDER = {
+    "eastmoney": "akshare_eastmoney",
+    "tencent": "akshare_tencent",
+    "sina": "akshare_sina",
+}
 
 # Realtime snapshot output schema (separate from the daily Market Data Contract).
 _REALTIME_COLUMNS = (
@@ -247,17 +281,40 @@ def _to_yyyymmdd(value) -> str:
     return str(value).strip().replace("-", "").replace("/", "")
 
 
+def _to_dashed(value: str) -> str:
+    """``"YYYYMMDD"`` → ``"YYYY-MM-DD"``（腾讯官方函数要求带连字符的日期格式）。"""
+    if not value:
+        return ""
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:8]}"
+    return value
+
+
+def _default_start() -> str:
+    """无起始日期时的默认回看起点（限制腾讯按年请求的次数）。"""
+    return f"{datetime.now().year - _TENCENT_DEFAULT_LOOKBACK_YEARS}-01-01"
+
+
+def _default_end() -> str:
+    return f"{datetime.now().year}-12-31"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _retry(func: Callable, *, max_retries: int = 2, backoff: float = 1.0):
-    """Call ``func`` up to ``1 + max_retries`` times with exponential backoff."""
+    """Call ``func`` up to ``1 + max_retries`` times with exponential backoff.
+
+    Only network / connection / timeout / HTTP errors (``_RETRYABLE_EXCEPTIONS``)
+    are retried. Field-mapping, JSON-structure and programming errors propagate
+    immediately rather than being swallowed.
+    """
     last: BaseException | None = None
     for attempt in range(max_retries + 1):
         try:
             return func()
-        except Exception as exc:  # noqa: BLE001 - provider/network errors
+        except _RETRYABLE_EXCEPTIONS as exc:
             last = exc
             if attempt < max_retries:
                 time.sleep(backoff * (2 ** attempt))
@@ -304,40 +361,59 @@ def _fetch_akshare_strict(symbols: list[str], start: str, end: str) -> pd.DataFr
         return _fetch_akshare(symbols, start, end)
     except NoDataError:
         raise
-    except Exception as exc:  # noqa: BLE001 - surface unexpected errors clearly
+    except _RETRYABLE_EXCEPTIONS as exc:
         raise NoDataError(f"AkShare 获取失败：{exc}") from exc
 
 
 def _fetch_akshare(symbols: list[str], start: str, end: str) -> pd.DataFrame:
-    """Fetch daily history via AkShare with eastmoney→tencent fallback.
+    """Fetch daily history via AkShare with eastmoney→tencent fallback + merge.
 
-    Returns contract-shaped data (``symbol`` 带 .SH/.SZ 后缀、``volume`` 股、
-    ``amount`` 元、``trade_date`` 字符串)。任一源成功即返回并记录 provider；
-    全部失败时抛出 ``NoDataError``，消息中列出已尝试的数据源。
+    Each provider is called for the symbols still missing after the previous one;
+    results are merged. Returns contract-shaped data (``symbol`` 带 .SH/.SZ 后缀、
+    ``volume`` 股、``amount`` 元、``trade_date`` 字符串)。若最终仍有缺失代码，抛出
+    ``NoDataError`` 并明确列出缺失代码——部分结果绝不当作全部成功。
     """
+    remaining = list(symbols)
+    frames: list[pd.DataFrame] = []
+    used_providers: list[str] = []
+    tried_providers: list[str] = []
     attempts = [
-        ("akshare_eastmoney", "eastmoney", _fetch_eastmoney),
-        ("akshare_tencent", "tencent", _fetch_tencent),
+        ("eastmoney", _fetch_eastmoney),
+        ("tencent", _fetch_tencent),
     ]
-    errors: list[str] = []
-    for source, provider, fetcher in attempts:
-        try:
-            df = fetcher(symbols, start, end)
-        except Exception as exc:  # noqa: BLE001 - provider/network errors
-            logger.warning("AkShare 数据源 %s 失败：%s", provider, exc)
-            errors.append(f"{provider}：{exc}")
-            continue
-        if df is not None and not df.empty:
-            return _mark_source(df, source, provider=provider)
-        errors.append(f"{provider}：返回空数据")
 
-    raise NoDataError(f"AkShare 未能获取 {symbols} 的行情数据（已尝试 {'；'.join(errors)}）")
+    for provider, fetcher in attempts:
+        if not remaining:
+            break
+        tried_providers.append(provider)
+        try:
+            df = fetcher(remaining, start, end)
+        except _RETRYABLE_EXCEPTIONS as exc:
+            logger.warning("AkShare 数据源 %s 失败：%s", provider, exc)
+            continue
+        if df is None or df.empty:
+            continue
+        frames.append(df)
+        used_providers.append(provider)
+        got = {s for s in df["symbol"].unique()}
+        remaining = [s for s in remaining if s not in got]
+
+    if remaining:
+        raise NoDataError(
+            f"AkShare 未能获取 {'、'.join(sorted(remaining))} 的行情数据"
+            f"（已尝试 {'、'.join(tried_providers)}）"
+        )
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged = _finalize_daily(merged, start, end)
+    return _mark_merged_source(merged, used_providers)
 
 
 def _fetch_eastmoney(symbols: list[str], start: str, end: str) -> pd.DataFrame | None:
     """Daily history via AkShare ``stock_zh_a_hist`` (eastmoney, 前复权 ``qfq``).
 
-    10s timeout，最多重试 2 次（指数退避）。返回标准 Schema 或空时返回 ``None``。
+    10s timeout，最多重试 2 次（指数退避）。逐股票抓取，单只股票网络失败只跳过该股
+    并记录日志，不影响其余股票；全部失败时返回 ``None``。
     """
     import akshare as ak
 
@@ -354,10 +430,14 @@ def _fetch_eastmoney(symbols: list[str], start: str, end: str) -> pd.DataFrame |
             kwargs["start_date"] = start
         if end:
             kwargs["end_date"] = end
-        raw = _retry(
-            lambda: ak.stock_zh_a_hist(**kwargs),
-            max_retries=_EASTMONEY_MAX_RETRIES,
-        )
+        try:
+            raw = _retry(
+                lambda: ak.stock_zh_a_hist(**kwargs),
+                max_retries=_EASTMONEY_MAX_RETRIES,
+            )
+        except _RETRYABLE_EXCEPTIONS as exc:
+            logger.warning("eastmoney 获取 %s 失败：%s", symbol, exc)
+            continue
         if raw is None or raw.empty:
             continue
         frames.append(_convert_akshare(raw))
@@ -367,44 +447,45 @@ def _fetch_eastmoney(symbols: list[str], start: str, end: str) -> pd.DataFrame |
 
 
 def _fetch_tencent(symbols: list[str], start: str, end: str) -> pd.DataFrame | None:
-    """Daily history from Tencent's qfq kline endpoint (``newfqkline``).
+    """Daily history via official AkShare ``stock_zh_a_hist_tx`` (Tencent, 前复权).
 
-    See the module note: we call the endpoint directly because AkShare's
-    ``stock_zh_a_hist_tx`` mislabels volume (手) as "amount" and drops the real
-    amount. We loop per year (the endpoint returns the trailing ~640 bars ending
-    at each year's end) and filter to ``[start, end]``.
+    使用官方封装，不直接维护腾讯 ``newfqkline`` 私有协议。官方函数返回
+    ``volume`` 已统一为股、``amount`` 已统一为元，并已按年份去重/排序/过滤。逐
+    股票抓取，单只失败只跳过该股；全部失败返回 ``None``。
     """
-    import requests
+    import akshare as ak
 
-    start_year = int(start[:4]) if start else _TENCENT_MIN_YEAR
-    end_year = int(end[:4]) if end else datetime.now().year
+    start_arg = _to_dashed(start) if start else _default_start()
+    end_arg = _to_dashed(end) if end else _default_end()
 
     frames = []
     for symbol in symbols:
         tx_symbol = _code_to_tx_symbol(symbol[:6])
-        per_symbol = []
-        for year in range(start_year, end_year + 1):
-            params = {
-                "param": f"{tx_symbol},day,{year}-01-01,{year + 1}-12-31,640,qfq",
-            }
-            resp = requests.get(_TENCENT_URL, params=params, timeout=_TENCENT_TIMEOUT)
-            resp.raise_for_status()
-            payload = json.loads(resp.text)
-            rows = (((payload.get("data") or {}).get(tx_symbol)) or {}).get("qfqday")
-            if not rows:
-                continue
-            per_symbol.append(_convert_tencent(rows))
-        if per_symbol:
-            symbol_df = pd.concat(per_symbol, ignore_index=True)
-            symbol_df["symbol"] = symbol
-            frames.append(symbol_df)
-
+        try:
+            raw = _retry(
+                lambda: ak.stock_zh_a_hist_tx(
+                    symbol=tx_symbol,
+                    start_date=start_arg,
+                    end_date=end_arg,
+                    adjust="qfq",
+                    timeout=_TENCENT_TIMEOUT,
+                ),
+                max_retries=_TENCENT_MAX_RETRIES,
+            )
+        except _RETRYABLE_EXCEPTIONS as exc:
+            logger.warning("tencent 获取 %s 失败：%s", symbol, exc)
+            continue
+        if raw is None or raw.empty:
+            continue
+        frames.append(_convert_tencent(raw, symbol))
     if not frames:
         return None
+    return pd.concat(frames, ignore_index=True)
 
-    df = pd.concat(frames, ignore_index=True)
-    # 各年请求区间存在重叠，按 (symbol, trade_date) 去重后再过滤/排序。
-    df = df.drop_duplicates(subset=["symbol", "trade_date"])
+
+def _finalize_daily(df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    """按 (symbol, trade_date) 去重，过滤到 [start, end]，再排序并固定列顺序。"""
+    df = df.drop_duplicates(subset=["symbol", "trade_date"]).copy()
     dates = pd.to_datetime(df["trade_date"], errors="coerce")
     mask = pd.Series(True, index=df.index)
     if start:
@@ -412,8 +493,6 @@ def _fetch_tencent(symbols: list[str], start: str, end: str) -> pd.DataFrame | N
     if end:
         mask &= dates <= pd.Timestamp(end)
     df = df[mask].sort_values(["symbol", "trade_date"]).reset_index(drop=True)
-    if df.empty:
-        return None
     return df[list(BASE_MARKET_COLUMNS)]
 
 
@@ -426,27 +505,24 @@ def _convert_akshare(raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _convert_tencent(rows: list[list]) -> pd.DataFrame:
-    """Tencent ``newfqkline`` qfqday rows → 标准 Schema（不含 symbol 列）。
+def _convert_tencent(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """官方 ``stock_zh_a_hist_tx`` 输出 → 标准 Schema。
 
-    Row layout: ``[date, open, close, high, low, volume(手), {}, turnover,
-    amount(万元), ""]``。OHLC 为前复权价；volume 手→股 ×100、amount 万元→元 ×10000。
+    官方已把 ``volume`` 统一为股、``amount`` 统一为元（``turnover`` 丢弃）。这里只
+    做列名映射 + 补 ``symbol`` 列；并修正 akshare 1.18.94 对深市主板 ``sz000`` 前
+    缀未 ×100 的 bug（000xxx 成交量仍是手，见模块 note）。
     """
-    df = pd.DataFrame(
-        {
-            "trade_date": [r[0] for r in rows],
-            "open": [r[1] for r in rows],
-            "close": [r[2] for r in rows],
-            "high": [r[3] for r in rows],
-            "low": [r[4] for r in rows],
-            "volume": [r[5] for r in rows],
-            "amount": [r[8] if len(r) > 8 else None for r in rows],
-        }
+    df = raw.rename(columns=_TX_COLUMN_MAP)
+    df["symbol"] = symbol
+    df = df[list(BASE_MARKET_COLUMNS)].copy()
+    df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce").dt.strftime(
+        "%Y-%m-%d"
     )
-    for col in ("open", "high", "low", "close"):
+    for col in ("open", "high", "low", "close", "volume", "amount"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce") * _TENCENT_VOLUME_TO_SHARES
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce") * _TENCENT_AMOUNT_TO_YUAN
+    if symbol.startswith("000"):
+        # 深市主板（sz000xxx）：官方函数未 ×100，此处按 Contract（volume=股）补正。
+        df["volume"] = df["volume"] * _AKSHARE_LOT_TO_SHARES
     return df
 
 
@@ -533,6 +609,18 @@ def _mark_source(
     return df
 
 
+def _mark_merged_source(df: pd.DataFrame, used_providers: list[str]) -> pd.DataFrame:
+    """Set provenance for a (possibly cross-provider) AkShare result.
+
+    Single provider → its ``data_source``/``provider``; merged across providers →
+    ``"akshare_mixed"`` and a ``"+"``-joined provider label.
+    """
+    if len(used_providers) == 1:
+        provider = used_providers[0]
+        return _mark_source(df, _AKSHARE_SOURCE_BY_PROVIDER[provider], provider=provider)
+    return _mark_source(df, "akshare_mixed", provider="+".join(used_providers))
+
+
 def _is_fallback_allowed(exc: BaseException) -> bool:
     """Whether an exception from Tushare may trigger a sample fallback.
 
@@ -557,15 +645,16 @@ def fetch_realtime_quotes(symbols: str | Iterable[str]) -> pd.DataFrame:
     """Fetch latest realtime snapshot quotes for one or more A-share symbols.
 
     Tries eastmoney ``stock_zh_a_spot_em`` (full-market snapshot) first, then
-    falls back to sina ``stock_zh_a_spot``. Filters to the requested symbols and
-    returns one row per symbol with: ``price`` (最新价), ``change`` (涨跌额),
-    ``pct_change`` (涨跌幅), ``prev_close`` (昨收), ``open`` (今开), ``high``,
-    ``low``, ``volume`` (股), ``amount`` (元) and ``timestamp`` (供应商时间戳；
-    仅新浪提供，东方财富快照为空).
+    falls back to sina ``stock_zh_a_spot`` for the symbols eastmoney did not
+    return. Returns one row per symbol with: ``price`` (最新价), ``change``
+    (涨跌额), ``pct_change`` (涨跌幅, 单位 %，即东财“涨跌幅”原始值), ``prev_close``
+    (昨收), ``open`` (今开), ``high``, ``low``, ``volume`` (股), ``amount`` (元)
+    and ``timestamp`` (供应商时间戳；仅新浪提供，东方财富快照为空).
 
     Realtime quotes may be delayed and are not guaranteed trade-grade. Never
     writes a local file. Provenance is recorded in ``df.attrs``
-    (``data_source`` / ``provider`` / ``fetched_at``).
+    (``data_source`` / ``provider`` / ``fetched_at``). 若最终仍有缺失代码，抛出
+    ``NoDataError`` 并明确列出缺失代码。
 
     Raises:
         InvalidSymbolError: malformed or unsupported symbol.
@@ -575,23 +664,39 @@ def fetch_realtime_quotes(symbols: str | Iterable[str]) -> pd.DataFrame:
     for symbol in symbols:
         _validate_symbol(symbol)
 
+    remaining = list(symbols)
+    frames: list[pd.DataFrame] = []
+    used_providers: list[str] = []
+    tried_providers: list[str] = []
     attempts = [
-        ("akshare_eastmoney", "eastmoney", _fetch_realtime_eastmoney),
-        ("akshare_sina", "sina", _fetch_realtime_sina),
+        ("eastmoney", _fetch_realtime_eastmoney),
+        ("sina", _fetch_realtime_sina),
     ]
-    errors: list[str] = []
-    for source, provider, fetcher in attempts:
-        try:
-            df = fetcher(symbols)
-        except Exception as exc:  # noqa: BLE001 - provider/network errors
-            logger.warning("实时行情源 %s 失败：%s", provider, exc)
-            errors.append(f"{provider}：{exc}")
-            continue
-        if df is not None and not df.empty:
-            return _mark_source(df, source, provider=provider)
-        errors.append(f"{provider}：未找到 {symbols}")
 
-    raise NoDataError(f"未能获取 {symbols} 的实时行情（已尝试 {'；'.join(errors)}）")
+    for provider, fetcher in attempts:
+        if not remaining:
+            break
+        tried_providers.append(provider)
+        try:
+            df = fetcher(remaining)
+        except _RETRYABLE_EXCEPTIONS as exc:
+            logger.warning("实时行情源 %s 失败：%s", provider, exc)
+            continue
+        if df is None or df.empty:
+            continue
+        frames.append(df)
+        used_providers.append(provider)
+        got = {s for s in df["symbol"].unique()}
+        remaining = [s for s in remaining if s not in got]
+
+    if remaining:
+        raise NoDataError(
+            f"未能获取 {'、'.join(sorted(remaining))} 的实时行情"
+            f"（已尝试 {'、'.join(tried_providers)}）"
+        )
+
+    merged = pd.concat(frames, ignore_index=True)
+    return _mark_merged_source(merged, used_providers)
 
 
 def _fetch_realtime_eastmoney(symbols: list[str]) -> pd.DataFrame | None:
