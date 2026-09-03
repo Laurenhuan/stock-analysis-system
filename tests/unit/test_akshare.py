@@ -1,8 +1,11 @@
 """Tests for the Role 2 AkShare provider (``fetch_market_data(source="akshare")``).
 
-All network access is mocked — no test here hits the real eastmoney endpoint, so
+Covers the eastmoney → tencent multi-source fallback, unit conversion, and
+provenance. All network access is mocked — no test here hits a real endpoint, so
 the suite runs offline and deterministically.
 """
+
+import json
 
 import pandas as pd
 import pytest
@@ -10,7 +13,10 @@ import pytest
 from src.contracts.market_data import BASE_MARKET_COLUMNS
 from src.data.clean import _detect_units, clean_market_data
 from src.data.fetch import (
+    _code_to_tx_symbol,
     _convert_akshare,
+    _convert_tencent,
+    _fetch_tencent,
     _symbol_with_exchange,
     fetch_market_data,
 )
@@ -39,8 +45,22 @@ def test_symbol_with_exchange_rejects_invalid():
         _symbol_with_exchange("abcdef")
 
 
+def test_code_to_tx_symbol_sh_and_sz():
+    assert _code_to_tx_symbol("600519") == "sh600519"
+    assert _code_to_tx_symbol("601318") == "sh601318"
+    assert _code_to_tx_symbol("000001") == "sz000001"
+    assert _code_to_tx_symbol("300750") == "sz300750"
+
+
+def test_code_to_tx_symbol_rejects_invalid():
+    with pytest.raises(InvalidSymbolError):
+        _code_to_tx_symbol("830000")  # 北交所
+    with pytest.raises(InvalidSymbolError):
+        _code_to_tx_symbol("60051")
+
+
 # ---------------------------------------------------------------------------
-# 列名映射 + 单位转换
+# 列名映射 + 单位转换（eastmoney）
 # ---------------------------------------------------------------------------
 
 def _akshare_raw_frame() -> pd.DataFrame:
@@ -82,10 +102,77 @@ def test_convert_akshare_amount_not_scaled_by_1000():
 
 
 # ---------------------------------------------------------------------------
-# 抓取（mock 网络）
+# 腾讯：列名 + 单位映射
 # ---------------------------------------------------------------------------
 
-def test_fetch_akshare_calls_stock_zh_a_hist_with_qfq(monkeypatch):
+_TENCENT_ROWS = [
+    # [date, open, close, high, low, volume(手), {}, turnover, amount(万元), ""]
+    ["2024-01-02", "1580.66", "1550.67", "1583.85", "1543.76", "32156.00", {}, "0.26", "544008.25", ""],
+    ["2024-01-03", "1546.77", "1559.66", "1560.88", "1541.99", "20229.00", {}, "0.16", "341140.07", ""],
+]
+
+
+def test_convert_tencent_maps_columns_and_units():
+    out = _convert_tencent(_TENCENT_ROWS)
+    assert out["trade_date"].tolist() == ["2024-01-02", "2024-01-03"]
+    # OHLC 为前复权价，顺序 open, close, high, low
+    assert out["open"].tolist() == pytest.approx([1580.66, 1546.77])
+    assert out["close"].tolist() == pytest.approx([1550.67, 1559.66])
+    assert out["high"].tolist() == pytest.approx([1583.85, 1560.88])
+    assert out["low"].tolist() == pytest.approx([1543.76, 1541.99])
+    # 成交量 手 -> 股 ×100（腾讯 volume 与 eastmoney 成交量同为“手”）
+    assert out["volume"].tolist() == pytest.approx([3215600.0, 2022900.0])
+    # 成交额 万元 -> 元 ×10000
+    assert out["amount"].tolist() == pytest.approx([5440082500.0, 3411400700.0])
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self.text = json.dumps(payload)
+
+    def raise_for_status(self):
+        return None
+
+
+def _tencent_payload(tx_symbol: str) -> dict:
+    return {"data": {tx_symbol: {"qfqday": _TENCENT_ROWS}}}
+
+
+def test_fetch_tencent_builds_sh_sz_and_qfq_params(monkeypatch):
+    import requests
+
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(params)
+        code = params["param"].split(",")[0]
+        return _FakeResponse(_tencent_payload(code))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    df = _fetch_tencent(["600519.SH", "000001.SZ"], "20240102", "20240105")
+    assert len(calls) == 2
+    p0 = calls[0]["param"]
+    assert p0.startswith("sh600519,day,")
+    assert p0.endswith(",640,qfq")
+    p1 = calls[1]["param"]
+    assert p1.startswith("sz000001,day,")
+    assert p1.endswith(",640,qfq")
+    # 返回含正确 symbol、正确单位的标准列
+    assert set(df["symbol"].unique()) == {"600519.SH", "000001.SZ"}
+    assert df["volume"].tolist() == pytest.approx([3215600.0, 2022900.0, 3215600.0, 2022900.0])
+    assert list(df.columns) == list(BASE_MARKET_COLUMNS)
+
+
+# ---------------------------------------------------------------------------
+# 抓取（mock 网络）：eastmoney 成功 / 回退腾讯 / 双双失败
+# ---------------------------------------------------------------------------
+
+def _no_sleep(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+
+
+def test_fetch_akshare_calls_stock_zh_a_hist_with_qfq_and_timeout(monkeypatch):
     import akshare
 
     captured = {}
@@ -97,16 +184,19 @@ def test_fetch_akshare_calls_stock_zh_a_hist_with_qfq(monkeypatch):
     monkeypatch.setattr(akshare, "stock_zh_a_hist", fake_stock_zh_a_hist)
 
     df = fetch_market_data("600519.SH", source="akshare")
-    # 传给 AkShare 的参数必须是裸 6 位代码 + daily + qfq
+    # 传给 AkShare 的参数必须是裸 6 位代码 + daily + qfq + timeout
     assert captured["symbol"] == "600519"
     assert captured["period"] == "daily"
     assert captured["adjust"] == "qfq"
+    assert captured["timeout"] == 10.0
     # 返回标准 Schema + 来源标记
     assert list(df.columns) == list(BASE_MARKET_COLUMNS)
     assert (df["symbol"] == "600519.SH").all()
     assert df["volume"].tolist() == [3215600, 2022900]
-    assert df.attrs["data_source"] == "akshare"
+    assert df.attrs["data_source"] == "akshare_eastmoney"
+    assert df.attrs["provider"] == "eastmoney"
     assert df.attrs["is_sample"] is False
+    assert "fetched_at" in df.attrs
 
 
 def test_fetch_akshare_passes_dates_and_multiple_symbols(monkeypatch):
@@ -134,23 +224,79 @@ def test_fetch_akshare_passes_dates_and_multiple_symbols(monkeypatch):
     assert calls[1]["symbol"] == "000001"
     # 后缀各自正确
     assert set(df["symbol"].unique()) == {"600519.SH", "000001.SZ"}
+    assert df.attrs["data_source"] == "akshare_eastmoney"
 
 
-def test_fetch_akshare_strict_raises_on_provider_error(monkeypatch):
+def test_fetch_akshare_falls_back_to_tencent(monkeypatch):
     import akshare
+    import requests
 
-    def boom(**kwargs):
-        raise OSError("network down")
+    def em_down(**kwargs):
+        raise OSError("Connection reset by peer")
 
-    monkeypatch.setattr(akshare, "stock_zh_a_hist", boom)
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", em_down)
+    _no_sleep(monkeypatch)
+
+    def fake_get(url, params=None, timeout=None):
+        code = params["param"].split(",")[0]
+        return _FakeResponse(_tencent_payload(code))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    df = fetch_market_data(
+        "600519.SH", start_date="20240102", end_date="20240105", source="akshare"
+    )
+    assert df.attrs["data_source"] == "akshare_tencent"
+    assert df.attrs["provider"] == "tencent"
+    assert df.attrs["is_sample"] is False
+    assert (df["symbol"] == "600519.SH").all()
+    assert df["volume"].tolist() == pytest.approx([3215600.0, 2022900.0])
+    assert "fetched_at" in df.attrs
+
+
+def test_fetch_akshare_both_providers_fail_raises(monkeypatch):
+    import akshare
+    import requests
+
+    def em_down(**kwargs):
+        raise OSError("em down")
+
+    def tx_down(*a, **k):
+        raise OSError("tx down")
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", em_down)
+    monkeypatch.setattr(requests, "get", tx_down)
+    _no_sleep(monkeypatch)
+
+    with pytest.raises(NoDataError) as excinfo:
+        fetch_market_data("600519.SH", source="akshare")
+    msg = str(excinfo.value)
+    # 错误消息必须列出已尝试的两个数据源
+    assert "eastmoney" in msg
+    assert "tencent" in msg
+
+
+def test_fetch_akshare_explicit_never_marks_sample(monkeypatch):
+    """显式 akshare 源失败必须抛异常，绝不静默回退 Sample。"""
+    import akshare
+    import requests
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", lambda **k: (_ for _ in ()).throw(OSError("em down")))
+    monkeypatch.setattr(requests, "get", lambda *a, **k: (_ for _ in ()).throw(OSError("tx down")))
+    _no_sleep(monkeypatch)
+
     with pytest.raises(NoDataError):
         fetch_market_data("600519.SH", source="akshare")
 
 
 def test_fetch_akshare_strict_raises_on_empty(monkeypatch):
     import akshare
+    import requests
 
     monkeypatch.setattr(akshare, "stock_zh_a_hist", lambda **k: pd.DataFrame())
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse({"data": {}}))
+    _no_sleep(monkeypatch)
+
     with pytest.raises(NoDataError):
         fetch_market_data("600519.SH", source="akshare")
 
@@ -165,6 +311,20 @@ def test_fetch_akshare_invalid_symbol_not_swallowed(monkeypatch):
     monkeypatch.setattr(akshare, "stock_zh_a_hist", boom)
     with pytest.raises(InvalidSymbolError):
         fetch_market_data("600519", source="akshare")  # 缺少 .SH/.SZ 后缀
+
+
+def test_online_fetch_never_writes_local_csv(monkeypatch):
+    """在线抓取（eastmoney / tencent / realtime）不得把结果写成本地 CSV。"""
+    import akshare
+
+    def no_write(*a, **k):
+        raise AssertionError("在线抓取不应写本地 CSV")
+
+    monkeypatch.setattr("pandas.DataFrame.to_csv", no_write)
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", lambda **k: _akshare_raw_frame())
+
+    df = fetch_market_data("600519.SH", source="akshare")
+    assert df.attrs["data_source"] == "akshare_eastmoney"
 
 
 # ---------------------------------------------------------------------------
