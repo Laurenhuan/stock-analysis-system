@@ -43,4 +43,10 @@ Role 3 的 build_eda_insights 依赖以下字段，请复核语义是否符合 M
 你把 D3 做了然后传上去吧。
 
 [处理结果]
-按模板补 daily/25151404/D3.md（回答老师昨日反馈「今日提交中最难的一步」、记录今日目标/实际进展/问题与解决/明日计划）与 prompts/25151404/D3/claude.txt，提交并推送 gitee。
+按模板补 daily/25151404/D3.md 与 prompts/25151404/D3/claude.txt，提交到 docs/25151404-d3-records 分支并推送 gitee。
+
+[用户提示 7]（老师 D2 过程反馈，本项 5 分）
+D1 提示词文件中与单位换算（手→股）、原子写入、fallback_reason 相关的提问分别对应哪次提交；并排查 86fd8a9/217c2cc 重复提交成因；建议显式链接提示词条目、pytest 输出入库、协调恢复 todos.md 文件名并建立个人贡献互链。
+
+[处理结果]
+核实：手→股对应【用户提示 6】→ bbd165b；原子写入、fallback_reason 对应【用户提示 8】→ f75c4a2（c39d4ad 为同轮 review 另一处修正）。86fd8a9/217c2cc 成因是我先在 docs/25151404-d1-records 提交一次、又在 docs/25151404-d2-records 重交同内容，86fd8a9 经 PR #11 合入 main、217c2cc 留 D1 分支未合入。据此重写 D3 日报第一节，并把三点建议写入明日计划。
