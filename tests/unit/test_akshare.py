@@ -30,7 +30,7 @@ from src.data.fetch import (
     _symbol_with_exchange,
     fetch_market_data,
 )
-from src.utils.exceptions import InvalidSymbolError, NoDataError
+from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoDataError
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +329,62 @@ def test_fetch_akshare_reports_missing_symbols(monkeypatch):
     assert "300750.SZ" in msg
 
 
+def test_fetch_akshare_eastmoney_out_of_range_still_calls_tencent(monkeypatch):
+    """eastmoney 返回了代码但记录都在请求区间外时，必须继续调用腾讯补齐。"""
+    import akshare
+
+    tx_called = []
+
+    def em_out_of_range(**kwargs):
+        raw = _akshare_raw_frame(kwargs["symbol"])
+        raw["日期"] = ["2023-01-02", "2023-01-03"]  # 全部在请求区间外
+        return raw
+
+    def fake_tx(**kwargs):
+        tx_called.append(kwargs)
+        return _tx_raw(kwargs["symbol"])
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", em_out_of_range)
+    monkeypatch.setattr(akshare, "stock_zh_a_hist_tx", fake_tx)
+    _no_sleep(monkeypatch)
+
+    df = fetch_market_data(
+        "600519.SH", start_date="20240102", end_date="20240105", source="akshare"
+    )
+
+    # 关键：eastmoney 区间外结果不能当作已成功，必须继续调用腾讯
+    assert len(tx_called) == 1
+    assert tx_called[0]["symbol"] == "sh600519"
+    assert df.attrs["data_source"] == "akshare_tencent"
+    assert (df["symbol"] == "600519.SH").all()
+
+
+def test_fetch_akshare_both_out_of_range_raises_no_data(monkeypatch):
+    """两个 Provider 都只有区间外数据时，抛 NoDataError 并列出缺失代码，不能返回空表。"""
+    import akshare
+
+    def em_out_of_range(**kwargs):
+        raw = _akshare_raw_frame(kwargs["symbol"])
+        raw["日期"] = ["2023-01-02", "2023-01-03"]
+        return raw
+
+    def tx_out_of_range(**kwargs):
+        raw = _tx_raw(kwargs["symbol"])
+        raw["date"] = ["2023-01-02", "2023-01-03"]
+        return raw
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", em_out_of_range)
+    monkeypatch.setattr(akshare, "stock_zh_a_hist_tx", tx_out_of_range)
+    _no_sleep(monkeypatch)
+
+    with pytest.raises(NoDataError) as excinfo:
+        fetch_market_data(
+            "600519.SH", start_date="20240102", end_date="20240105", source="akshare"
+        )
+    # 必须列出缺失代码，而不是返回空 DataFrame
+    assert "600519.SH" in str(excinfo.value)
+
+
 def test_fetch_akshare_both_providers_fail_raises(monkeypatch):
     import akshare
 
@@ -400,6 +456,18 @@ def test_fetch_akshare_invalid_symbol_not_swallowed(monkeypatch):
         fetch_market_data("600519", source="akshare")  # 缺少 .SH/.SZ 后缀
 
 
+def test_fetch_market_data_rejects_start_after_end(monkeypatch):
+    """公共入口校验 start_date <= end_date，越界时抛 DataValidationError。"""
+    import akshare
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", lambda **k: _akshare_raw_frame())
+
+    with pytest.raises(DataValidationError):
+        fetch_market_data(
+            "600519.SH", start_date="20250101", end_date="20240101", source="akshare"
+        )
+
+
 def test_online_fetch_never_writes_local_csv(monkeypatch):
     """在线抓取（eastmoney / tencent / realtime）不得把结果写成本地 CSV。"""
     import akshare
@@ -441,6 +509,43 @@ def test_fetch_tencent_no_start_date_uses_bounded_default(monkeypatch):
     year = datetime.now().year
     assert captured["start_date"] == f"{year - 2}-01-01"
     assert captured["end_date"] == f"{year}-12-31"
+
+
+def test_fetch_tencent_historical_end_date_uses_end_year_lookback(monkeypatch):
+    """只传历史 end_date 时，腾讯默认起点按 end 年份回看，避免 start > end 越界。"""
+    import akshare
+
+    captured = {}
+
+    def em_down(**kwargs):
+        raise OSError("em down")
+
+    def fake_tx(**kwargs):
+        captured.update(kwargs)
+        # 返回落在 2020 区间内的数据，保证最终成功并命中断言
+        return pd.DataFrame({
+            "date": ["2020-01-02", "2020-01-03"],
+            "open": [10.0, 11.0],
+            "close": [10.5, 11.5],
+            "high": [11.0, 12.0],
+            "low": [9.0, 10.0],
+            "volume": [100.0, 120.0],
+            "turnover": [0.1, 0.1],
+            "amount": [1000.0, 1200.0],
+        })
+
+    monkeypatch.setattr(akshare, "stock_zh_a_hist", em_down)
+    monkeypatch.setattr(akshare, "stock_zh_a_hist_tx", fake_tx)
+    _no_sleep(monkeypatch)
+
+    df = fetch_market_data("600519.SH", end_date="20200105", source="akshare")
+
+    assert captured["symbol"] == "sh600519"
+    # 起点按 end 年份 2020 回看 2 年 = 2018-01-01，而不是当前年份（会 > end 触发越界）
+    assert captured["start_date"] == "2018-01-01"
+    assert captured["end_date"] == "2020-01-05"
+    assert df.attrs["data_source"] == "akshare_tencent"
+    assert (df["symbol"] == "600519.SH").all()
 
 
 def test_fetch_tencent_builds_tx_symbol_and_dashed_dates(monkeypatch):

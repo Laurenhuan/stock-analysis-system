@@ -222,6 +222,9 @@ def fetch_market_data(
     start = _to_yyyymmdd(start_date)
     end = _to_yyyymmdd(end_date)
 
+    if start and end and start > end:
+        raise DataValidationError(f"开始日期 {start} 不能晚于结束日期 {end}")
+
     if source == "sample":
         return _load_sample(symbols, start, end)
 
@@ -290,9 +293,16 @@ def _to_dashed(value: str) -> str:
     return value
 
 
-def _default_start() -> str:
-    """无起始日期时的默认回看起点（限制腾讯按年请求的次数）。"""
-    return f"{datetime.now().year - _TENCENT_DEFAULT_LOOKBACK_YEARS}-01-01"
+def _default_start(end: str = "") -> str:
+    """无起始日期时的默认回看起点（限制腾讯按年请求的次数）。
+
+    默认起点按 ``end`` 的年份回看：传了历史 ``end_date`` 时按该年份回看，避免出现
+    ``start > end`` 的越界查询；未传 ``end`` 时才按当前年份回看。
+    """
+    end_year = datetime.now().year
+    if end and len(end) >= 4 and end[:4].isdigit():
+        end_year = int(end[:4])
+    return f"{end_year - _TENCENT_DEFAULT_LOOKBACK_YEARS}-01-01"
 
 
 def _default_end() -> str:
@@ -387,11 +397,17 @@ def _fetch_akshare(symbols: list[str], start: str, end: str) -> pd.DataFrame:
             break
         tried_providers.append(provider)
         try:
-            df = fetcher(remaining, start, end)
+            raw = fetcher(remaining, start, end)
         except _RETRYABLE_EXCEPTIONS as exc:
             logger.warning("AkShare 数据源 %s 失败：%s", provider, exc)
             continue
-        if df is None or df.empty:
+        if raw is None or raw.empty:
+            continue
+        # 先按请求股票 + 日期区间过滤并去重，再据此判断该 Provider 真正拿到了哪些
+        # 股票。若 Provider 返回了代码但所有记录都在区间外，此处会得到空表并跳过，
+        # 从而继续调用下一 Provider，而不是把 0 行结果误判为成功。
+        df = _finalize_daily(raw, start, end, symbols=remaining)
+        if df.empty:
             continue
         frames.append(df)
         used_providers.append(provider)
@@ -405,7 +421,15 @@ def _fetch_akshare(symbols: list[str], start: str, end: str) -> pd.DataFrame:
         )
 
     merged = pd.concat(frames, ignore_index=True)
-    merged = _finalize_daily(merged, start, end)
+    merged = _finalize_daily(merged, start, end, symbols=symbols)
+    # 最终合并后再次核对全部请求股票，防止部分结果被当作全部成功。
+    got = {s for s in merged["symbol"].unique()}
+    missing = [s for s in symbols if s not in got]
+    if missing:
+        raise NoDataError(
+            f"AkShare 未能获取 {'、'.join(sorted(missing))} 的行情数据"
+            f"（已尝试 {'、'.join(tried_providers)}）"
+        )
     return _mark_merged_source(merged, used_providers)
 
 
@@ -455,7 +479,7 @@ def _fetch_tencent(symbols: list[str], start: str, end: str) -> pd.DataFrame | N
     """
     import akshare as ak
 
-    start_arg = _to_dashed(start) if start else _default_start()
+    start_arg = _to_dashed(start) if start else _default_start(end)
     end_arg = _to_dashed(end) if end else _default_end()
 
     frames = []
@@ -483,8 +507,12 @@ def _fetch_tencent(symbols: list[str], start: str, end: str) -> pd.DataFrame | N
     return pd.concat(frames, ignore_index=True)
 
 
-def _finalize_daily(df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
-    """按 (symbol, trade_date) 去重，过滤到 [start, end]，再排序并固定列顺序。"""
+def _finalize_daily(
+    df: pd.DataFrame, start: str, end: str, symbols: list[str] | None = None
+) -> pd.DataFrame:
+    """按请求股票过滤 + (symbol, trade_date) 去重 + 过滤到 [start, end] + 排序。"""
+    if symbols is not None:
+        df = df[df["symbol"].isin(symbols)].copy()
     df = df.drop_duplicates(subset=["symbol", "trade_date"]).copy()
     dates = pd.to_datetime(df["trade_date"], errors="coerce")
     mask = pd.Series(True, index=df.index)
