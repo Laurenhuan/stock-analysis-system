@@ -95,14 +95,20 @@ def build_stock_profiles(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         raise DataValidationError("输入 DataFrame 为空")
 
-    # ── 去掉全 NaN 行（第一行 return 为 NaN 是正常的）──
+    # ── 去掉全 NaN 行 ──
+    # Role 2 的 build_common_features 输出中，第一行 return 为 NaN（没有前一天收盘价可算）
+    # 这是正常现象，先去掉再做后续校验
     df = df.dropna(subset=["return", "drawdown"])
 
     # ── 校验数值列 ──
+    # 检查 return 和 drawdown 列是否有非法值（NaN/inf）
+    # 此时第一行 NaN 已被去掉，如果还有 NaN 说明数据有问题
     _validate_numeric_column(df, "return", "build_stock_profiles")
     _validate_numeric_column(df, "drawdown", "build_stock_profiles")
 
-    # ── 校验每只股票的有效 return 数量（先于时间区间检查）──
+    # ── 校验每只股票的有效 return 数量 ──
+    # 至少需要 2 个有效 return 才能计算标准差（ddof=1 需要至少 2 个数据点）
+    # 这个检查放在时间区间检查之前，避免因为数据不足导致误报区间不一致
     grouped_returns = df.groupby("symbol")["return"]
     for sym, ret in grouped_returns:
         valid_count = ret.count()
@@ -205,17 +211,28 @@ def run_clustering(
         _validate_numeric_column(profiles, col, "run_clustering")
 
     # ── 提取特征矩阵 ──
+    # 只取 3 个特征列，转为 numpy 数组供 sklearn 使用
     X = profiles[list(FEATURE_COLS)].values  # shape: (n_stocks, 3)
 
     # ── 标准化 ──
+    # 为什么要做标准化？因为 3 个特征的量纲不同：
+    # - mean_return 范围约 -0.05 ~ 0.05
+    # - volatility 范围约 0 ~ 0.3
+    # - max_drawdown 范围约 -0.5 ~ 0
+    # 如果不标准化，数值大的特征会主导聚类结果
+    # StandardScaler 把每个特征变成均值=0、标准差=1
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
     # ── K-Means 聚类 ──
+    # n_init=10 表示用不同初始中心跑 10 次，取最好的结果
+    # random_state=42 保证每次运行结果相同（可复现）
     kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=random_state, n_init=10)
     labels = kmeans.fit_predict(X_scaled)
 
     # ── 中心点还原到原始尺度 ──
+    # 聚类中心是在标准化后的空间计算的，需要还原到原始尺度才有实际含义
+    # 例如：cluster 0 的 mean_return 中心是 0.02，表示该类股票平均日收益约 2%
     centers_scaled = kmeans.cluster_centers_
     centers_original = scaler.inverse_transform(centers_scaled)
 
