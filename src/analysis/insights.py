@@ -392,6 +392,17 @@ def _risk_insights(rc, rr) -> list[EdaInsight]:
     merged = rc[["symbol", "cumulative_return"]].merge(
         rr[["symbol", "volatility", "max_drawdown"]], on="symbol"
     )
+    # 剔除累计收益或波动率为 NaN 的股票，避免 nan% 混入结论。
+    merged = merged.dropna(subset=["cumulative_return", "volatility"])
+    if merged.empty:
+        insights.append(_insight(
+            CATEGORY_RISK, "收益与风险样本不足",
+            "有效收益或波动率不足，无法判断高收益是否伴随高波动。",
+            "剔除累计收益/波动率为 NaN 的股票后无有效样本。",
+            "样本不足时不生成收益与风险的交叉结论，以免误导。",
+            DISCLAIMER,
+        ))
+        return insights
     med_ret = merged["cumulative_return"].median()
     med_vol = merged["volatility"].median()
     high_high = merged[(merged["cumulative_return"] > med_ret) & (merged["volatility"] > med_vol)]
@@ -422,11 +433,11 @@ def _risk_insights(rc, rr) -> list[EdaInsight]:
             direction = "正相关" if rho > 0 else ("负相关" if rho < 0 else "无单调关系")
             insights.append(_insight(
                 CATEGORY_RISK, "收益与风险关系",
-                f"在所选的 {len(merged)} 只股票中，累计收益与波动率呈{direction}"
+                f"在 {len(merged)} 只有效股票中，累计收益与波动率呈{direction}"
                 f"（Spearman ρ={_corr(rho)}）。",
                 "统计口径为截面排序相关，非时间序列相关。",
                 "说明收益较高的股票是否整体伴随较高波动。",
-                f"仅 {len(merged)} 只股票，样本较少，此关系仅供参考；{DISCLAIMER}",
+                f"仅 {len(merged)} 只有效股票，样本较少，此关系仅供参考；{DISCLAIMER}",
             ))
     return insights
 

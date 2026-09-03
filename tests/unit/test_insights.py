@@ -184,6 +184,30 @@ def test_single_stock_all_nan_no_overview(single_df):
     assert "收益数据不足" in titles or "样本不足" in titles
 
 
+def test_all_nan_returns_no_nan_percent(multi_df):
+    # 组长复审：多股 return 全 NaN 时，结论不得出现 nan%。
+    df = multi_df.copy()
+    df["return"] = np.nan
+    insights = build_eda_insights(df)
+    text = _all_text(insights)
+    assert "nan%" not in text
+    assert "收益与风险样本不足" in _titles(insights)
+
+
+def test_three_stocks_two_valid_no_spearman():
+    # 组长复审：3 只股票中仅 2 只有效时，不得生成「收益与风险关系」。
+    df = _make_df(
+        {
+            "A": [100.0, 110.0, 105.0, 120.0, 115.0],
+            "B": [10.0, 9.0, 9.5, 10.0, 10.5],
+            "C": [20.0, 22.0, 19.0, 25.0, 24.0],
+        }
+    )
+    df.loc[df["symbol"] == "C", "return"] = np.nan
+    insights = build_eda_insights(df)
+    assert "收益与风险关系" not in _titles(insights)
+
+
 # --- trend / moving averages -------------------------------------------------
 
 def test_unformed_moving_averages_noted_in_caveat():
