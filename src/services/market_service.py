@@ -10,7 +10,7 @@ from pandas import DataFrame, Timestamp
 
 from src.data.clean import clean_market_data
 from src.data.features import build_common_features
-from src.data.fetch import fetch_market_data
+from src.data.fetch import fetch_market_data, fetch_realtime_quotes
 from src.utils.exceptions import DataValidationError
 
 
@@ -34,6 +34,8 @@ class MarketDataMetadata(TypedDict):
     """Source information surfaced to Streamlit without exposing adapters."""
 
     data_source: str
+    provider: str | None
+    fetched_at: str | None
     is_sample: bool
     fallback_reason: str | None
 
@@ -74,6 +76,8 @@ def load_market_data(
     )
     provenance = {
         "data_source": str(raw.attrs.get("data_source", source)),
+        "provider": raw.attrs.get("provider"),
+        "fetched_at": raw.attrs.get("fetched_at"),
         "is_sample": bool(raw.attrs.get("is_sample", source == "sample")),
         "fallback_reason": raw.attrs.get("fallback_reason"),
     }
@@ -89,9 +93,21 @@ def get_market_metadata(data: DataFrame) -> MarketDataMetadata:
     source = str(data.attrs.get("data_source", "unknown"))
     return MarketDataMetadata(
         data_source=source,
+        provider=data.attrs.get("provider"),
+        fetched_at=data.attrs.get("fetched_at"),
         is_sample=bool(data.attrs.get("is_sample", source == "sample")),
         fallback_reason=data.attrs.get("fallback_reason"),
     )
+
+
+def load_realtime_quotes(symbols: str | Iterable[str]) -> DataFrame:
+    """Load current quote snapshots through Role 2's public data API.
+
+    Realtime quotes intentionally bypass cleaning and feature engineering: they
+    follow their own 12-column display schema rather than the daily-market
+    Contract. Provider provenance remains available through DataFrame.attrs.
+    """
+    return fetch_realtime_quotes(symbols)
 
 
 def get_market_overview(

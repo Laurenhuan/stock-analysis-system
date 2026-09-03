@@ -8,13 +8,14 @@ from src.services import (
     get_sample_date_bounds,
     get_sample_symbols,
     load_market_data,
+    load_realtime_quotes,
 )
 from src.utils.exceptions import StockAnalysisError
 
 
 SOURCE_OPTIONS = {
-    "离线样例（推荐）": "sample",
-    "自动（Tushare 不可用时回退样例）": "auto",
+    "离线样例（稳定演示）": "sample",
+    "自动选择数据源": "auto",
     "AkShare 在线行情": "akshare",
 }
 
@@ -32,9 +33,30 @@ with st.sidebar:
     start_date = st.date_input("开始日期", value=first_date)
     end_date = st.date_input("结束日期", value=last_date)
     load_data = st.button("加载行情", type="primary")
+    load_realtime = st.button("查询实时快照")
+
+if not load_data and not load_realtime:
+    st.info("请选择查询条件，再加载日线行情或查询实时快照。")
+    st.stop()
+
+if load_realtime:
+    try:
+        realtime_data = load_realtime_quotes(selected_symbol)
+        realtime_metadata = get_market_metadata(realtime_data)
+    except StockAnalysisError as error:
+        st.error(f"实时行情查询失败：{error}")
+    else:
+        st.subheader("实时行情快照")
+        st.caption(
+            "来源："
+            f"{realtime_metadata['data_source']} / "
+            f"{realtime_metadata['provider'] or 'unknown'}；"
+            f"抓取时间：{realtime_metadata['fetched_at'] or '供应商未提供'}。"
+            "快照可能存在延迟，不代表交易所逐笔实时行情。"
+        )
+        st.dataframe(realtime_data, width="stretch", hide_index=True)
 
 if not load_data:
-    st.info("请在左侧选择条件后点击“加载行情”。")
     st.stop()
 
 try:
@@ -54,6 +76,10 @@ if metadata["is_sample"]:
     st.warning("当前为离线样例快照，不是实时行情。")
 else:
     st.success(f"当前数据来源：{metadata['data_source']}")
+if metadata["provider"]:
+    st.caption(f"数据提供方：{metadata['provider']}")
+if metadata["fetched_at"]:
+    st.caption(f"抓取时间：{metadata['fetched_at']}")
 if metadata["fallback_reason"]:
     st.caption(f"回退原因：{metadata['fallback_reason']}")
 

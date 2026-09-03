@@ -31,6 +31,10 @@ with st.sidebar:
     correlation_method = st.selectbox(
         "相关系数方法", options=("spearman", "pearson", "kendall")
     )
+    candlestick_symbol = st.selectbox(
+        "K 线股票",
+        options=selected_symbols or symbols,
+    )
     run_analysis = st.button("运行 EDA", type="primary")
 
 if not run_analysis:
@@ -49,7 +53,9 @@ try:
     )
     metadata = get_market_metadata(market_data)
     dashboard = build_eda_dashboard(
-        market_data, correlation_method=correlation_method
+        market_data,
+        correlation_method=correlation_method,
+        candlestick_symbol=candlestick_symbol,
     )
 except StockAnalysisError as error:
     st.error(str(error))
@@ -58,9 +64,31 @@ except StockAnalysisError as error:
 if metadata["is_sample"]:
     st.warning("本页使用 2024 年离线样例快照，结果仅用于课程演示。")
 
-overview_tab, return_tab, chart_tab = st.tabs(
-    ("数据质量与描述统计", "收益与风险", "图表与相关性")
+insight_tab, overview_tab, return_tab, chart_tab = st.tabs(
+    ("分析结论", "数据质量与描述统计", "收益与风险", "图表与相关性")
 )
+
+with insight_tab:
+    st.subheader("所选历史区间说明了什么")
+    st.caption("以下发现由当前数据动态计算，用于回答表现、风险、趋势和相关性问题。")
+    category_names = {
+        "performance": "表现",
+        "risk": "风险",
+        "trend": "趋势",
+        "correlation": "相关性",
+        "data_quality": "数据质量",
+    }
+    current_category = None
+    for insight in dashboard["insights"]:
+        category = insight["category"]
+        if category != current_category:
+            st.markdown(f"### {category_names.get(category, category)}")
+            current_category = category
+        st.markdown(f"#### {insight['title']}")
+        st.write(insight["finding"])
+        st.caption(f"依据：{insight['evidence']}")
+        st.write(f"解释：{insight['interpretation']}")
+        st.caption(insight["caveat"])
 
 with overview_tab:
     st.subheader("日期范围")
@@ -79,6 +107,7 @@ with return_tab:
     st.plotly_chart(dashboard["risk_figure"], width="stretch")
 
 with chart_tab:
+    st.plotly_chart(dashboard["candlestick_figure"], width="stretch")
     st.plotly_chart(dashboard["price_figure"], width="stretch")
     st.plotly_chart(dashboard["returns_figure"], width="stretch")
     st.plotly_chart(dashboard["correlation_figure"], width="stretch")

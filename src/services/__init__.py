@@ -12,8 +12,12 @@ from .market_service import (
     get_sample_date_bounds,
     get_sample_symbols,
     load_market_data,
+    load_realtime_quotes,
 )
-from .supervised_service import run_regression_dashboard
+from .supervised_service import (
+    run_classification_dashboard,
+    run_regression_dashboard,
+)
 
 __all__ = [
     "build_eda_dashboard",
@@ -25,6 +29,8 @@ __all__ = [
     "get_sample_symbols",
     "get_stock_profiles",
     "load_market_data",
+    "load_realtime_quotes",
+    "run_classification_dashboard",
     "run_regression_dashboard",
     "run_stock_clustering",
 ]
