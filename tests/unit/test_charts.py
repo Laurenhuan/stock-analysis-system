@@ -13,6 +13,7 @@ from src.utils.exceptions import DataValidationError, NoDataError
 from src.visualization.charts import (
     _COLOR_SEQUENCE,
     plot_actual_vs_predicted,
+    plot_candlestick,
     plot_confusion_matrix,
     plot_correlation_matrix,
     plot_price,
@@ -62,6 +63,33 @@ def risk_df() -> pd.DataFrame:
             "symbol": ["600519.SH", "000001.SZ"],
             "volatility": [0.08, 0.12],
             "max_drawdown": [-0.05, -0.10],
+        }
+    )
+
+
+@pytest.fixture
+def ohlc_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            "open": [100.0, 110.0, 105.0],
+            "high": [112.0, 115.0, 108.0],
+            "low": [98.0, 108.0, 103.0],
+            "close": [110.0, 105.0, 107.0],
+        }
+    )
+
+
+@pytest.fixture
+def multi_ohlc_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"] * 2),
+            "symbol": ["600519.SH", "600519.SH", "000001.SZ", "000001.SZ"],
+            "open": [100.0, 110.0, 10.0, 11.0],
+            "high": [112.0, 115.0, 12.0, 13.0],
+            "low": [98.0, 108.0, 9.0, 10.0],
+            "close": [110.0, 105.0, 11.0, 12.0],
         }
     )
 
@@ -119,6 +147,63 @@ def test_plot_price_ten_symbols_traces():
     fig = plot_price(pd.DataFrame(rows))
     assert len(fig.data) == 10
     assert [t.name for t in fig.data] == symbols
+
+
+# --- plot_candlestick --------------------------------------------------------
+
+def test_plot_candlestick_returns_figure(ohlc_df):
+    fig = plot_candlestick(ohlc_df)
+    assert isinstance(fig, go.Figure)
+
+
+def test_plot_candlestick_trace_type(ohlc_df):
+    fig = plot_candlestick(ohlc_df)
+    assert len(fig.data) == 1
+    assert isinstance(fig.data[0], go.Candlestick)
+
+
+def test_plot_candlestick_single_trace_data(ohlc_df):
+    fig = plot_candlestick(ohlc_df)
+    assert list(fig.data[0].open) == [100.0, 110.0, 105.0]
+    assert list(fig.data[0].high) == [112.0, 115.0, 108.0]
+    assert list(fig.data[0].low) == [98.0, 108.0, 103.0]
+    assert list(fig.data[0].close) == [110.0, 105.0, 107.0]
+
+
+def test_plot_candlestick_multi_symbol_traces(multi_ohlc_df):
+    fig = plot_candlestick(multi_ohlc_df)
+    assert len(fig.data) == 2  # one candlestick per symbol
+
+
+def test_plot_candlestick_missing_column(ohlc_df):
+    with pytest.raises(DataValidationError):
+        plot_candlestick(ohlc_df.drop(columns=["open"]))
+
+
+def test_plot_candlestick_empty():
+    with pytest.raises(NoDataError):
+        plot_candlestick(pd.DataFrame())
+
+
+def test_plot_candlestick_symbols_requires_symbol_column(ohlc_df):
+    with pytest.raises(DataValidationError):
+        plot_candlestick(ohlc_df, symbols=["600519.SH"])
+
+
+def test_plot_candlestick_symbols_selection(multi_ohlc_df):
+    fig = plot_candlestick(multi_ohlc_df, symbols=["600519.SH"])
+    assert len(fig.data) == 1
+    assert fig.data[0].name == "600519.SH"
+
+
+def test_plot_candlestick_symbols_not_found(multi_ohlc_df):
+    with pytest.raises(NoDataError):
+        plot_candlestick(multi_ohlc_df, symbols=["999999.SZ"])
+
+
+def test_plot_candlestick_rangeslider_hidden(ohlc_df):
+    fig = plot_candlestick(ohlc_df)
+    assert fig.layout.xaxis.rangeslider.visible is False
 
 
 # --- plot_returns_comparison -------------------------------------------------
@@ -303,13 +388,18 @@ def test_color_sequence_ten_distinct_colors():
     assert len(set(_COLOR_SEQUENCE)) == len(_COLOR_SEQUENCE)
 
 
-def test_chart_functions_do_not_mutate_input(multi_price_df, returns_df, risk_df):
+def test_chart_functions_do_not_mutate_input(
+    multi_price_df, returns_df, risk_df, multi_ohlc_df
+):
     price_before = multi_price_df.copy(deep=True)
     returns_before = returns_df.copy(deep=True)
     risk_before = risk_df.copy(deep=True)
+    ohlc_before = multi_ohlc_df.copy(deep=True)
     plot_price(multi_price_df)
     plot_returns_comparison(returns_df)
     plot_risk_comparison(risk_df)
+    plot_candlestick(multi_ohlc_df)
     pd.testing.assert_frame_equal(multi_price_df, price_before)
     pd.testing.assert_frame_equal(returns_df, returns_before)
     pd.testing.assert_frame_equal(risk_df, risk_before)
+    pd.testing.assert_frame_equal(multi_ohlc_df, ohlc_before)
