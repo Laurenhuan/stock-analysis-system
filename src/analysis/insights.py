@@ -23,14 +23,12 @@ import pandas as pd
 from pandas import DataFrame
 
 from src.analysis.eda import (
-    _CORR_METHODS,
-    _require_columns,
     correlation_matrix,
     date_range_summary,
     returns_comparison,
     risk_return_summary,
 )
-from src.utils.exceptions import DataValidationError, InsufficientDataError
+from src.utils.exceptions import DataValidationError, InsufficientDataError, NoDataError
 
 # Insight categories (used by Role 1 to group the finding cards).
 CATEGORY_PERFORMANCE = "performance"
@@ -41,6 +39,9 @@ CATEGORY_DATA_QUALITY = "data_quality"
 
 # Mandatory caveat stamped on every group of conclusions.
 DISCLAIMER = "仅描述所选历史区间，不代表未来表现，不构成投资建议。"
+
+# 相关系数方法白名单（模块内自持，不复用 eda 的私有 _CORR_METHODS）。
+_CORR_METHODS = ("pearson", "spearman", "kendall")
 
 
 class EdaInsight(TypedDict):
@@ -77,6 +78,22 @@ def _insight(category, title, finding, evidence, interpretation, caveat=DISCLAIM
     }
 
 
+def _require_columns(df: DataFrame, required: tuple[str, ...], *, label: str) -> None:
+    """模块内输入校验：空输入抛 NoDataError，缺列抛 DataValidationError。
+
+    不复用 ``eda._require_columns``（私有实现），保持本模块自包含。
+    """
+    if not isinstance(df, DataFrame):
+        raise DataValidationError(
+            f"{label} 需要 pandas.DataFrame，收到 {type(df).__name__}"
+        )
+    if df.empty:
+        raise NoDataError(f"{label} 输入数据为空")
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise DataValidationError(f"{label} 缺少必需字段：{missing}")
+
+
 def _top_by(df: DataFrame, column: str):
     """Return ``(symbols, value)`` of the maximum of ``column`` (ties included)."""
     valid = df.dropna(subset=[column])
@@ -99,7 +116,7 @@ def _bottom_by(df: DataFrame, column: str):
 
 def _compare_median(value: float, median: float, *, higher: bool) -> str:
     diff = value - median if higher else median - value
-    verb = "高出" if higher else "低出"
+    verb = "高于" if higher else "低于"
     return f"同组中位数为 {_pct(median)}，{verb} {_pp(diff)}。"
 
 

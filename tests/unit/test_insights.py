@@ -257,6 +257,13 @@ def test_no_investment_advice_words(multi_df, single_df):
             assert word not in text, f"出现禁用词：{word}"
 
 
+def test_comparison_wording_uses_than_not_out(multi_df):
+    # 组长要求：「低出……个百分点」改为「低于……个百分点」；对应「高出」一并改为「高于」。
+    text = _all_text(build_eda_insights(multi_df))
+    assert "低出" not in text
+    assert "高出" not in text
+
+
 # --- validation --------------------------------------------------------------
 
 def test_invalid_correlation_method(multi_df):
