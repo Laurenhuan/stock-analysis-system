@@ -35,16 +35,16 @@
 
 ## 当前验收状态
 
-- Role 2 最新数据链路已同步到本地分支 `feat/akshare-multisource`；Role 1 集成分支 `feat/role1-final-integration` 已接入实时行情、EDA 结论/K 线和 Decision Tree 页面。
+- Role 2 最新数据链路已通过 PR !18 合入 Gitee `main`；Role 1 的实时行情、EDA 结论/K 线和 Decision Tree 页面已通过 PR !23 完成最终集成。
 - 全仓测试：`277 passed`；本轮定向 Service 测试：`16 passed`；页面语法与 Page → Service 分层检查通过。
 - 在线行情不落本地 CSV；页面明确展示 Sample/在线状态、实际 provider、抓取时间及延迟说明。
 - 两个旧的 `prompts/D1/` 目录说明文件已按组长确认移除，没有修改其他成员按学号归档的课程记录。
 
 ## 合并与课程记录待办
 
-- [ ] G1 由 Role 1 推送 `feat/akshare-multisource`，在 Gitee 完成 Role 2 代码 PR 合并
-- [ ] G2 由 Role 1 推送 `feat/role1-final-integration`，在 Gitee 完成最终代码集成 PR 合并
-- [ ] G3 由 Role 1 在上述代码进入 `main` 后，如实补充自己的当日日报与真实 Codex 导出；本轮不生成
-- [ ] G4 由 Role 2 本人维护并合并其 D3 日报和 prompts PR；Role 1 不代写、不改写
+- [x] G1 由 Role 1 推送 `feat/akshare-multisource`，在 Gitee 完成 Role 2 代码 PR 合并
+- [x] G2 由 Role 1 推送 `feat/role1-final-integration`，在 Gitee 完成最终代码集成 PR 合并
+- [x] G3 由 Role 1 在代码进入 `main` 后，如实补充本人的 D3 日报与真实 Codex 提示词记录
+- [x] G4 由 Role 2 本人维护并合并其 D3 日报和 prompts PR；Role 1 未代写、未改写
 - [ ] G5 Gitee `main` 稳定后同步 GitHub 备份镜像
 - [ ] G6 期末阶段由各成员完成本人 `docs/<学号>/` 下的课程报告，不提前虚构

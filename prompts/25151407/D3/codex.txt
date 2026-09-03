@@ -1,0 +1,100 @@
+证券金融数据分析与可视化系统
+D3 Codex 关键用户提示词记录
+日期：2026-09-03
+工具：Codex
+使用者：Laurenhuan（Role 1，学号 25151407）
+
+说明：以下内容摘自本人当天与 Codex 的真实对话，只保留本人发送的关键 user prompt；不包含 AI 回答、系统消息、自动上下文、密码、Token 或 Cookie。
+
+[Prompt 01]
+role4的任务出了问题，怎么解决？关闭让他重新提交还是我们这边直接更改？千万不能改我们的那些正确的提示词和daily
+
+[Prompt 02]
+我要给role4评论，把他的所有的需要改问题列出来
+
+[Prompt 03]
+好的，我已经给了role4整改记录，等待他整改中。现在其他role有可以操作的事项吗？今天有没有什么别的任务？如果目前只有role4没有完成，那我们相当于就只有一个算法没有实现了，但是我还没有看到我们的具体界面？你拉起一下我看一下，然后看是否符合我们的预期
+
+[Prompt 04]
+现在有几个问题。一个是我刚刚看了role2的功能，他的数据是离线数据，我们想要的是使用akshare调用实时的数据，而不是下载到本地（之前我们用toshare不行，你说akshare可行，但是貌似也是不行的）。这个点role2可以则呢么整改？提示词是什么我发给role2。我们的role3反映，我们的数据分析只是一个数据的展示，展示出来哪只股是多少等等这种情况。并没有表现出什么结果，没有给我们任何启发，我们看了不知道有什么，不知道最终要达到什么目的？我们这一点可以怎么整改。
+
+[Prompt 05]
+这是role2的新的pr，使用akshare的方式成功了吗？你需要看什么文件？
+
+[Prompt 06]
+为什么这里有东方财富网和新浪？我们不是在akshare吗？怎么突然引进来了这个，这个是必须的吗
+
+[Prompt 07]
+这是我们role3的pr，检测一下有没有达到以前的要求？
+
+[Prompt 08]
+这是role3新提交的pr，检查一下是否符合我们之前的标准，然后有必要的话审核下修改的文件
+
+[Prompt 09]
+修复内容
+改用官方 stock_zh_a_hist_tx：删除了腾讯私有 newfqkline 直连（_TENCENT_URL/requests.get/_convert_tencent 行解析），改为 ak.stock_zh_a_hist_tx(symbol=tx_symbol, start_date=..., end_date=..., adjust="qfq", timeout=...)。官方函数已把 volume 统一为股、amount 统一为元，只做列名映射。
+688 科创板单位：官方函数对 sh688 不 ×100（volume 本就是股），_convert_tencent 不再统一 ×100，只对深市主板补正。
+多股票部分成功 + 跨 Provider 合并：_fetch_akshare / fetch_realtime_quotes 改为「核对实际返回集合 → 只对缺失股票调用备用 Provider → 合并 → 缺失代码明确报 NoDataError」，绝不再把部分结果当全部成功。跨源合并时 provenance 记为 akshare_mixed / eastmoney+tencent。
+收窄异常：_retry 与回退循环只捕获 (ConnectionError, TimeoutError, OSError)，字段映射/JSON 结构/程序错误（KeyError、TypeError 等）直接上抛。
+补充 8 项测试（新增 14 个用例）：688 单位、day/qfqday、多源合并与缺失报告、跨年去重与日期过滤、无起始日期的有界默认起点、腾讯经 clean_market_data 不二次换算、实时部分缺失、pct_change 单位（百分比，非小数）。
+
+role2之前整改了一个，你看看这个是否符合要求，改正确了吗
+
+[Prompt 10]
+改了什么
+src/analysis/insights.py 的 _risk_insights：
+
+merged 合并 cumulative_return 与 volatility 后，先 dropna(subset=["cumulative_return", "volatility"])，把 NaN 股票剔除，避免 nan% 混进结论。
+有效样本为空 → 输出「收益与风险样本不足」并提前返回，不再生成「高收益伴随高波动」。
+只有有效股票数 >= 3 时才计算 Spearman；文案从「在所选的 N 只」改为「在 N 只有效股票中」。
+补的回归测试
+tests/unit/test_insights.py 新增两条：
+
+test_all_nan_returns_no_nan_percent — 多股 return 全 NaN 时，输出不含 nan%，且出现「收益与风险样本不足」。
+test_three_stocks_two_valid_no_spearman — 3 只股票仅 2 只有效时，不生成「收益与风险关系」。
+测试结果
+Role 3 单测：91 → 93 passed（test_insights + test_eda + test_charts）
+全仓：240 → 242 passed
+git diff --check 干净（无空白/冲突残留）
+推送状态
+已提交并推送到 gitee feat/eda-visualization：e3fedf0..8695f54，未新开 PR、未强推。分支仍相对 gitee/main 落后 0 个提交。
+
+你可以在原 PR 里把测试数字更新为：Role 3 单测 93 passed，全仓 242 passed。
+
+这是role3的更改，有没有达到我们的要求？是否正确？
+
+[Prompt 11]
+这种工作是否能够我来做，好像并不是非常严重。我合并了之后再我来进行更改是否可行。或者我更改了之后再merge呢，这样还是算在role3上吗
+
+[Prompt 12]
+好的。那我们开始先修改，你帮我改好然后commit上去，我来pr
+
+[Prompt 13]
+Microsoft Windows [版本 10.0.26200.9168]
+(c) Microsoft Corporation。保留所有权利。
+
+C:\Users\LENOVO>cd D:\Codex工作空间\stock-analysis-system-role-boundaries
+
+C:\Users\LENOVO>git push origin feat/eda-visualization
+fatal: not a git repository (or any of the parent directories): .git
+
+C:\Users\LENOVO>失败了好像？
+
+[Prompt 14]
+所以我现在重新mergerole3的pr就对了是吗
+
+[Prompt 15]
+现在检查我们的todos，所有的代码都已经上传，然后role2的我还没有merge，你看看适不适合merge，如果不行我们先更改了再merge。然后检查我们的todos里面的任务有没有完成，没有完成先向我汇报哪里没有完成，还有关于todos的内容，到底符不符合我们的项目要求。你先检查一遍，审核一下role2的最新的代码pr和todos有没有符合老师的要求
+
+[Prompt 16]
+好的，关于role2的部分你来实现你想要的结果。然后role2现在又提交了关于他的今日的daily和prompts的pr，这个不用审核是正确的我们直接merge。然后是我们的todos，你按照我们现在的实际进度和情况进行一下更新。关于我我们目录下的旧文件prompts/D1/README.md
+prompts/D1/juanjuan-he-claude.txt，直接删除就好。关于我的提示词和daily，一会再生成和提交，因为我有一些改动需要和你讨论。期末报告就像他的名字一样，是期末报告期末再写现在不写。我今天的role1的任务就按照你说的role1集成分支来接入，然后我们和role2的一起merge了，这一轮完成删那两个文件和我们这个项目的我的剩余部分修改（role1和todos这类），并且我来merge，然后下一轮来完成我的prompts和daily。其实就是按照你说的顺序开始做。我把所有都弄到main上之后再进行我自己的daily和prompts的提交。
+
+[Prompt 17]
+不用跑了，直接给我详细步骤让我merge，我现在需要做我的daily和prompts，马上就要到截止时间来不及了。
+
+[Prompt 18]
+已全部合并并同步 main
+
+[Prompt 19]
+现在已经做完了你所有的事情。
