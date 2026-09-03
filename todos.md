@@ -13,30 +13,38 @@
 ## 数据与分析
 
 - [x] R6 实现 Sample Data Fallback，使无 Token、无网络时仍可运行
-- [x] R7 实现行情获取、清洗、标准字段和公共金融指标
-- [x] R8 为数据层补充字段、排序、唯一性、冲突和指标测试
-- [x] R9 完成 EDA、描述统计、缺失值检查和多股票比较
-- [x] R10 完成可复用 Plotly 行情、收益率、波动率和回撤图表
+- [x] R7 实现 AkShare 在线日线多源回退、行情清洗、标准字段和公共金融指标
+- [x] R8 为数据层补充字段、排序、唯一性、部分成功、单位和多源回退测试
+- [x] R9 完成 EDA、描述统计、缺失值检查、多股票比较和问题驱动结论
+- [x] R10 完成可复用 Plotly 行情、K 线、收益率、波动率、回撤及模型图表
 
 ## 算法
 
-- [ ] R11 完成 Decision Tree 次日上涨/非上涨分类及 Accuracy、Confusion Matrix
+- [x] R11 完成 Decision Tree 次日上涨/非上涨分类及 Accuracy、Confusion Matrix
 - [x] R12 完成 Linear Regression 次日收益率回归及 MAE、R²、Actual vs Predicted
 - [x] R13 完成 Stock Profile、StandardScaler、K-Means 与 Cluster 解释
-- [ ] R14 检查时间序列切分、未来信息泄漏、随机种子和可复现性（回归与聚类已覆盖，待 Role 4 分类合并后完成全面验收）
+- [x] R14 检查时间序列切分、未来信息泄漏、随机种子和可复现性
 
 ## 应用与交付
 
 - [x] R15 打通 Streamlit → Service → Sample DataFrame → 筛选 → 表格/价格图原型
-- [x] R16 将 Role 2 数据层替换接入正式数据概览页面
-- [ ] R17 将 Role 3/4/5/6 结果接入对应 Streamlit 页面（Role 3/5/6 已接入，Role 4 待合并）
-- [ ] R18 完成六人模块集成测试、异常提示和演示数据检查（已覆盖 Role 2/3/5/6 与页面边界，待 Role 4）
-- [ ] R19 完成调研报告、项目报告、演示材料和最终回归测试
+- [x] R16 将 Role 2 在线日线、实时快照及来源信息接入数据概览页面
+- [x] R17 将 Role 3/4/5/6 结果接入对应 Service 与 Streamlit 页面
+- [x] R18 完成六人模块集成测试、异常提示和演示数据检查
+- [ ] R19 完成期末课程报告、最终演示材料和交付前回归测试（按课程阶段安排，当前不提前编写）
 
-## D2 集成验收记录
+## 当前验收状态
 
-- 当前分支：`integration/d2`；已有本地提交 `51884df` 和 `7547408`，分支领先远端 2 个 commit，尚未 push。本轮课程材料路径修正仍未提交。
-- 完整测试：`179 passed`；新增的 Service/分层集成测试：`17 passed`。
-- Streamlit 检查：首页与 4 个页面入口均无加载异常，4 个功能页默认按钮链路均无异常。
-- Role 1 D2 日报路径：`daily/25151407/D2.md`；三份期末过程文档复制到 `docs/25151407/`并保留根目录旧链接。
-- Role 1 真实 Codex 对话尚待操作者导出到 `prompts/25151407/D2/codex.txt`；本次未创建任何伪造 prompts。
+- Role 2 最新数据链路已同步到本地分支 `feat/akshare-multisource`；Role 1 集成分支 `feat/role1-final-integration` 已接入实时行情、EDA 结论/K 线和 Decision Tree 页面。
+- 全仓测试：`277 passed`；本轮定向 Service 测试：`16 passed`；页面语法与 Page → Service 分层检查通过。
+- 在线行情不落本地 CSV；页面明确展示 Sample/在线状态、实际 provider、抓取时间及延迟说明。
+- 两个旧的 `prompts/D1/` 目录说明文件已按组长确认移除，没有修改其他成员按学号归档的课程记录。
+
+## 合并与课程记录待办
+
+- [ ] G1 由 Role 1 推送 `feat/akshare-multisource`，在 Gitee 完成 Role 2 代码 PR 合并
+- [ ] G2 由 Role 1 推送 `feat/role1-final-integration`，在 Gitee 完成最终代码集成 PR 合并
+- [ ] G3 由 Role 1 在上述代码进入 `main` 后，如实补充自己的当日日报与真实 Codex 导出；本轮不生成
+- [ ] G4 由 Role 2 本人维护并合并其 D3 日报和 prompts PR；Role 1 不代写、不改写
+- [ ] G5 Gitee `main` 稳定后同步 GitHub 备份镜像
+- [ ] G6 期末阶段由各成员完成本人 `docs/<学号>/` 下的课程报告，不提前虚构
