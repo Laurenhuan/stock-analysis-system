@@ -116,6 +116,65 @@ def plot_price(
     return _apply_theme(fig)
 
 
+def plot_candlestick(
+    df: DataFrame,
+    *,
+    symbols: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """OHLC candlestick chart.
+
+    Draws one candlestick trace per symbol. Candlesticks are most meaningful for
+    a single stock, so pass ``symbols`` to focus on one symbol when the
+    DataFrame holds many.
+
+    ``symbols`` restricts which symbols are drawn; by default every symbol is
+    drawn.
+    """
+    _check_input(
+        df, ("trade_date", "open", "high", "low", "close"),
+        label="plot_candlestick",
+    )
+    if symbols is not None:
+        if "symbol" not in df.columns:
+            raise DataValidationError(
+                "plot_candlestick 指定了 symbols 选股，但输入缺少 symbol 字段"
+            )
+        df = _filter_symbols(df, symbols, label="plot_candlestick")
+    fig = go.Figure()
+    multi = "symbol" in df.columns and df["symbol"].nunique() > 1
+
+    if multi:
+        for symbol, group in df.groupby("symbol"):
+            fig.add_trace(
+                go.Candlestick(
+                    x=group["trade_date"],
+                    open=group["open"],
+                    high=group["high"],
+                    low=group["low"],
+                    close=group["close"],
+                    name=str(symbol),
+                )
+            )
+    else:
+        # 单一股票（或选股后只剩 1 只）时保留 symbol 作为图例名
+        name = str(df["symbol"].iloc[0]) if "symbol" in df.columns else "价格"
+        fig.add_trace(
+            go.Candlestick(
+                x=df["trade_date"],
+                open=df["open"],
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
+                name=name,
+            )
+        )
+
+    fig.update_layout(title=title, xaxis_title="交易日期", yaxis_title="价格")
+    fig.update_xaxes(rangeslider_visible=False)
+    return _apply_theme(fig)
+
+
 def plot_returns_comparison(
     df: DataFrame,
     *,
