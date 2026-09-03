@@ -3,6 +3,9 @@
 流程：
 1. build_stock_profiles: 行情 DataFrame → 每只股票的3个特征（Stock Profile Table）
 2. run_clustering: Profile Table → StandardScaler → KMeans(k=3) → ClusteringResult
+
+输入 DataFrame 必须包含 Role 2 输出的公共字段：
+- symbol, trade_date, return, drawdown
 """
 
 from __future__ import annotations
@@ -21,9 +24,43 @@ from src.utils.exceptions import DataValidationError, InsufficientDataError
 
 # ── 常量 ──────────────────────────────────────────────
 
-FEATURE_COLS: list[str] = ["mean_return", "volatility", "max_drawdown"]
+FEATURE_COLS: tuple[str, ...] = ("mean_return", "volatility", "max_drawdown")
 N_CLUSTERS: int = 3
 DEFAULT_RANDOM_STATE: int = 42
+MIN_RETURNS_PER_STOCK: int = 2
+MIN_VALID_PROFILES: int = 3
+
+
+# ── 辅助函数 ──────────────────────────────────────────
+
+
+def _validate_dataframe(df: pd.DataFrame, context: str) -> None:
+    """校验输入是否为 DataFrame。"""
+    if not isinstance(df, pd.DataFrame):
+        raise DataValidationError(
+            f"{context}：输入类型应为 DataFrame，实际为 {type(df).__name__}"
+        )
+
+
+def _validate_numeric_column(
+    df: pd.DataFrame, col: str, context: str
+) -> None:
+    """校验数值列：转换失败、NaN、inf 统一抛 DataValidationError。"""
+    if col not in df.columns:
+        raise DataValidationError(f"{context}：缺少列 '{col}'")
+
+    try:
+        values = pd.to_numeric(df[col], errors="raise")
+    except (ValueError, TypeError) as e:
+        raise DataValidationError(
+            f"{context}：列 '{col}' 数值转换失败: {e}"
+        ) from e
+
+    if values.isna().any():
+        raise DataValidationError(f"{context}：列 '{col}' 存在 NaN")
+
+    if not np.isfinite(values).all():
+        raise DataValidationError(f"{context}：列 '{col}' 存在 inf 值")
 
 
 # ── 第一步：从行情数据构建 Stock Profile Table ────────
@@ -32,13 +69,25 @@ DEFAULT_RANDOM_STATE: int = 42
 def build_stock_profiles(df: pd.DataFrame) -> pd.DataFrame:
     """将多只股票多天的行情数据，聚合为每只股票一行的 Profile Table。
 
-    输入 df 必须包含的列：symbol, close, drawdown
-    （drawdown 由 Role 2 在数据清洗阶段计算好）
+    输入 df 必须包含 Role 2 输出的公共字段：
+    - symbol, trade_date, return, drawdown
 
     返回的 DataFrame 列：symbol, mean_return, volatility, max_drawdown
+
+    规则：
+    - mean_return：简单日收益率算术平均，不年化
+    - volatility：简单日收益率样本标准差，ddof=1，不年化
+    - max_drawdown：比较区间 drawdown 最小值
+
+    异常：
+    - DataValidationError：类型错误、缺少列、空 DataFrame、NaN/inf、时间区间不一致
+    - InsufficientDataError：有效 return 不足 2 个、有效 Profile 不足 3 个
     """
-    # ── 校验输入 ──
-    required = {"symbol", "close", "drawdown"}
+    # ── 校验输入类型 ──
+    _validate_dataframe(df, "build_stock_profiles")
+
+    # ── 校验输入列 ──
+    required = {"symbol", "trade_date", "return", "drawdown"}
     missing = required - set(df.columns)
     if missing:
         raise DataValidationError(f"输入缺少必要列: {missing}")
@@ -46,43 +95,64 @@ def build_stock_profiles(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         raise DataValidationError("输入 DataFrame 为空")
 
-    # ── 按股票分组，计算每日收益率 ──
-    # 收益率 = (今天收盘价 - 昨天收盘价) / 昨天收盘价
-    # groupby + pct_change 会自动按每只股票独立计算
-    df = df.sort_values(["symbol", "trade_date"]).copy()
-    df["daily_return"] = df.groupby("symbol")["close"].pct_change()
+    # ── 去掉全 NaN 行（第一行 return 为 NaN 是正常的）──
+    df = df.dropna(subset=["return", "drawdown"])
 
-    # 第一天没有"昨天"，收益率为 NaN，丢弃
-    df = df.dropna(subset=["daily_return"])
+    # ── 校验数值列 ──
+    _validate_numeric_column(df, "return", "build_stock_profiles")
+    _validate_numeric_column(df, "drawdown", "build_stock_profiles")
 
-    # ── 按 symbol 聚合出3个特征 ──
-    profiles = (
-        df.groupby("symbol")
-        .agg(
-            mean_return=("daily_return", "mean"),       # 平均收益率
-            volatility=("daily_return", "std"),          # 收益率标准差（ddof=1）
-            max_drawdown=("drawdown", "min"),            # 最大回撤（取最小值）
+    # ── 校验每只股票的有效 return 数量（先于时间区间检查）──
+    grouped_returns = df.groupby("symbol")["return"]
+    for sym, ret in grouped_returns:
+        valid_count = ret.count()
+        if valid_count < MIN_RETURNS_PER_STOCK:
+            raise InsufficientDataError(
+                f"股票 {sym} 有效 return 仅 {valid_count} 个，"
+                f"不足 {MIN_RETURNS_PER_STOCK}，无法计算波动率"
+            )
+
+    # ── 校验时间区间一致性 ──
+    date_range = df.groupby("symbol")["trade_date"].agg(["min", "max"])
+    if date_range["min"].nunique() > 1 or date_range["max"].nunique() > 1:
+        raise DataValidationError(
+            "各股票比较区间不一致：start_date 或 end_date 不同"
         )
-        .reset_index()
-    )
+
+    # ── 按股票分组，聚合特征 ──
+    df = df.sort_values(["symbol", "trade_date"]).copy()
+
+    profiles = []
+    for symbol, group in df.groupby("symbol"):
+        returns = group["return"].dropna()
+
+        mean_return = returns.mean()
+        volatility = returns.std(ddof=1)
+        max_drawdown = group["drawdown"].min()
+
+        profiles.append(
+            {
+                "symbol": symbol,
+                "mean_return": mean_return,
+                "volatility": volatility,
+                "max_drawdown": max_drawdown,
+            }
+        )
+
+    result = pd.DataFrame(profiles)
+
+    # ── 校验有效 Profile 数量 ──
+    if len(result) < MIN_VALID_PROFILES:
+        raise InsufficientDataError(
+            f"有效 Profile 仅 {len(result)} 个，"
+            f"不足 {MIN_VALID_PROFILES}，无法进行 K-Means 聚类"
+        )
 
     # ── 校验输出质量 ──
-    if profiles["symbol"].duplicated().any():
+    if result["symbol"].duplicated().any():
         raise DataValidationError("Profile 中存在重复 symbol")
 
-    nan_cols = [c for c in FEATURE_COLS if profiles[c].isna().any()]
-    if nan_cols:
-        raise DataValidationError(f"特征列存在 NaN: {nan_cols}")
-
-    non_finite = [
-        c
-        for c in FEATURE_COLS
-        if not np.isfinite(profiles[c]).all()
-    ]
-    if non_finite:
-        raise DataValidationError(f"特征列存在非有限值: {non_finite}")
-
-    return profiles[["symbol", *FEATURE_COLS]]
+    return result[["symbol", *FEATURE_COLS]]
 
 
 # ── 第二步：StandardScaler + KMeans 聚类 ─────────────
@@ -94,23 +164,48 @@ def run_clustering(
 ) -> ClusteringResult:
     """对 Stock Profile Table 执行 K-Means 聚类，返回 Contract 约定的结果。
 
-    1. 用 StandardScaler 标准化3个特征（私有，不改原始值）
-    2. 用 KMeans(n_clusters=3) 聚类
-    3. 用 inverse_transform 把中心点还原到原始尺度
-    4. 组装成 ClusteringResult 返回
+    1. 校验输入数据质量
+    2. 用 StandardScaler 标准化3个特征（私有，不改原始值）
+    3. 用 KMeans(n_clusters=3) 聚类
+    4. 用 inverse_transform 把中心点还原到原始尺度
+    5. 组装成 ClusteringResult 返回
+
+    参数：
+        profiles: 包含 symbol 和三个特征列的 DataFrame
+        random_state: 随机种子，默认 42，相同输入和参数可复现
+
+    返回：
+        ClusteringResult: 包含 profiles, cluster_centers, features, k
+
+    异常：
+        DataValidationError: 类型错误、缺少列、symbol 重复、NaN/inf 值
+        InsufficientDataError: 股票数量不足 3
     """
-    # ── 校验输入 ──
+    # ── 校验输入类型 ──
+    _validate_dataframe(profiles, "run_clustering")
+
+    # ── 校验输入列 ──
     missing = {"symbol", *FEATURE_COLS} - set(profiles.columns)
     if missing:
         raise DataValidationError(f"Profile 缺少必要列: {missing}")
 
+    # ── 校验 symbol 唯一性 ──
+    if profiles["symbol"].duplicated().any():
+        dupes = profiles[profiles["symbol"].duplicated()]["symbol"].tolist()
+        raise DataValidationError(f"Profile 中存在重复 symbol: {dupes}")
+
+    # ── 校验股票数量 ──
     if len(profiles) < N_CLUSTERS:
         raise InsufficientDataError(
             f"股票数量 {len(profiles)} 不足 {N_CLUSTERS}，无法聚类"
         )
 
+    # ── 校验特征值质量 ──
+    for col in FEATURE_COLS:
+        _validate_numeric_column(profiles, col, "run_clustering")
+
     # ── 提取特征矩阵 ──
-    X = profiles[FEATURE_COLS].values  # shape: (n_stocks, 3)
+    X = profiles[list(FEATURE_COLS)].values  # shape: (n_stocks, 3)
 
     # ── 标准化 ──
     scaler = StandardScaler()
@@ -121,27 +216,22 @@ def run_clustering(
     labels = kmeans.fit_predict(X_scaled)
 
     # ── 中心点还原到原始尺度 ──
-    # kmeans.cluster_centers_ 是标准化空间的中心
-    # scaler.inverse_transform 还原回 mean_return/volatility/max_drawdown 的真实数值
     centers_scaled = kmeans.cluster_centers_
     centers_original = scaler.inverse_transform(centers_scaled)
 
     # ── 组装结果 ──
-
-    # profiles: 原始尺度 + cluster 列
     result_profiles = profiles.copy()
     result_profiles["cluster"] = labels
 
-    # cluster_centers: 还原到原始尺度的中心点
     result_centers = pd.DataFrame(
         centers_original,
-        columns=FEATURE_COLS,
+        columns=list(FEATURE_COLS),
     )
     result_centers.insert(0, "cluster", range(N_CLUSTERS))
 
     return ClusteringResult(
         profiles=result_profiles,
         cluster_centers=result_centers,
-        features=FEATURE_COLS,
+        features=list(FEATURE_COLS),
         k=N_CLUSTERS,
     )
