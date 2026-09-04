@@ -10,7 +10,11 @@ from pandas import DataFrame, Timestamp
 
 from src.data.clean import clean_market_data
 from src.data.features import build_common_features
-from src.data.fetch import fetch_market_data, fetch_realtime_quotes
+from src.data.fetch import (
+    fetch_market_data,
+    fetch_realtime_quotes,
+    search_stock_symbols,
+)
 from src.utils.exceptions import DataValidationError
 
 
@@ -43,6 +47,16 @@ class MarketDataMetadata(TypedDict):
 def get_sample_symbols() -> list[str]:
     """Return the documented Role 2 offline-demo stock universe."""
     return list(SAMPLE_SYMBOLS)
+
+
+def search_stocks(query: str, *, limit: int = 20) -> DataFrame:
+    """Search the online A-share directory through Role 2's public API.
+
+    The Streamlit layer calls this Service wrapper so provider access remains
+    behind the application boundary. An empty query or no match returns the
+    same empty, display-ready table as the data API.
+    """
+    return search_stock_symbols(query, limit=limit)
 
 
 def get_sample_date_bounds(symbol: str | None = None) -> tuple[date, date]:

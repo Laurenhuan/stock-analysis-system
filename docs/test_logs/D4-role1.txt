@@ -1,0 +1,21 @@
+D4 Role 1 集成测试记录
+日期：2026-09-04
+分支：feat/ui-workspaces
+
+变更前基线：本轮接入前未单独运行，不补写或推算测试数字。
+
+定向测试命令：
+.venv\Scripts\python.exe -m pytest -q tests/integration/test_market_service.py tests/integration/test_service_workflows.py tests/integration/test_workspace_service.py tests/integration/test_streamlit_app.py tests/integration/test_imports.py tests/integration/test_layer_boundaries.py
+结果：39 passed in 4.96s
+
+全仓测试命令：
+.venv\Scripts\python.exe -m pytest -q
+结果：400 passed, 1632 warnings in 9.21s
+
+警告说明：现有 warning 均来自 Role 3 测试数据构造时使用 pandas.Timedelta 的 NumPy generic timedelta 弃用提示；本轮无测试失败。
+
+在线只读冒烟：
+.venv\Scripts\python.exe -c "from src.services import search_stocks; print(search_stocks('茅台', limit=3).to_string(index=False))"
+结果：返回 600519.SH / 贵州茅台 / SH。在线目录结果未写入本地 CSV。
+
+空白检查：git diff --check 无输出，退出成功。

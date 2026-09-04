@@ -2,12 +2,12 @@
 
 ## Status
 
-Contract Review Candidate v0.2。D2 已把 Role 2/3/5/6 的公共实现接入 Role 1 Service 与 Streamlit 页面；Role 4 Decision Tree 仍保持待接入状态。当前六人 Ownership 以 `docs/role_boundaries.md` 为准，日常集成规则见 `docs/team_conventions.md`。
+Contract Review Candidate v0.2。Role 2–6 的公共实现均已接入 Role 1 Service。D4 使用项目首页、单股研究和多股比较三个 Streamlit 页面组织已集成功能。当前六人 Ownership 以 `docs/role_boundaries.md` 为准，日常集成规则见 `docs/team_conventions.md`。
 
 ## Layering
 
 ```text
-Streamlit (app.py / pages)
+Streamlit (app.py / app_pages)
             ↓
 Service Layer (src/services)
             ↓
@@ -35,12 +35,14 @@ Service Layer 不负责：
 - 自己实现聚类算法；
 - 重复 Role 2–6 已拥有的业务逻辑。
 
-D2 对页面开放的稳定入口为：
+当前对页面开放的稳定入口为：
 
 | 页面用例 | Service 入口 | Domain Owner |
 | --- | --- | --- |
 | 行情数据 | `load_market_data` | Role 2 |
+| 实时快照 | `load_realtime_quotes` | Role 2 |
 | 价格图与 EDA | `build_price_figure` / `build_eda_dashboard` | Role 3 |
+| 决策树分类 | `run_classification_dashboard` | Role 4 + Role 3 图表 |
 | 线性回归 | `run_regression_dashboard` | Role 6 + Role 3 图表 |
 | 股票聚类 | `run_stock_clustering` | Role 5 |
 
@@ -75,7 +77,7 @@ Domain Modules 抛出最具体的领域异常。Service Layer 可以记录上下
 
 | Role | Primary ownership |
 | --- | --- |
-| Role 1 | `app.py`, `pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, `docs/architecture.md`, `docs/contracts/` |
+| Role 1 | `app.py`, `app_pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, `docs/architecture.md`, `docs/contracts/` |
 | Role 2 | `src/data/` |
 | Role 3 | `src/analysis/`, `src/visualization/` |
 | Role 4 | `src/models/supervised/classification.py` 及分类/泄漏单元测试 |

@@ -6,7 +6,7 @@ Ownership identifies the primary reviewer and coordinator for a path. It is not 
 
 | Role | Primary paths |
 | --- | --- |
-| Role 1 | `app.py`, `pages/`, `src/contracts/`, `src/services/`, `src/utils/`, `tests/integration/`, `docs/architecture.md`, `docs/contracts/` |
+| Role 1 | `app.py`, `app_pages/`, `src/contracts/`, `src/services/`, `src/utils/`, `tests/integration/`, `docs/architecture.md`, `docs/contracts/` |
 | Role 2 | `src/data/` |
 | Role 3 | `src/analysis/`, `src/visualization/` |
 | Role 4 | `src/models/supervised/classification.py`, classification and classification-leakage unit tests |
