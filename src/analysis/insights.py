@@ -515,11 +515,11 @@ def _distribution_insights(dist) -> list[EdaInsight]:
     skew_row = valid.loc[valid["skewness"].abs().idxmax()]
     return [
         _insight(
-            CATEGORY_DISTRIBUTION, "厚尾最明显",
+            CATEGORY_DISTRIBUTION, "超额峰度最高",
             f"{fat['symbol']} 日收益超额峰度最高，为 {fat['kurtosis']:.2f}"
-            f"（基于 {int(fat['n'])} 个有效交易日），明显高于正态的 0。",
-            "超额峰度为正表示分布尾部比正态更厚，极端涨跌出现的概率相对更高。",
-            "该股票在所选区间的收益分布相对更厚尾。",
+            f"（基于 {int(fat['n'])} 个有效交易日），{_kurt_label(fat['kurtosis'])}。",
+            "超额峰度以正态分布的 0 为基准：正值表示厚尾、负值表示轻尾、接近 0 表示接近正态。",
+            "该股票在所选区间的收益分布尾部特征相对最突出。",
             DISCLAIMER,
         ),
         _insight(
@@ -535,6 +535,12 @@ def _distribution_insights(dist) -> list[EdaInsight]:
 
 
 # --- extreme moves -----------------------------------------------------------
+
+def _min_return_interpretation(value: float) -> str:
+    if value < 0:
+        return "该日同时是所选区间内的最大单日跌幅。"
+    return "所选区间内所有有效日收益均为非负，不存在单日下跌日。"
+
 
 def _extreme_insights(ext) -> list[EdaInsight]:
     if ext is None:
@@ -564,17 +570,25 @@ def _extreme_insights(ext) -> list[EdaInsight]:
             DISCLAIMER,
         ),
         _insight(
-            CATEGORY_RISK, "最小单日收益",
+            CATEGORY_RISK, "最低单日收益",
             f"{down['symbol']} 在 {down_day} 单日收益 {_pct(down['min_return'])}，"
-            f"为区间内最小单日收益（即最大单日跌幅）。",
+            f"为区间内最低单日收益。",
             "单日收益取各股票各自有效收益日的最小值，再跨股票比较。",
-            "负值表示单日下跌；该值为所选区间内的极端单日回撤。",
+            _min_return_interpretation(down["min_return"]),
             DISCLAIMER,
         ),
     ]
 
 
 # --- volatility regime -------------------------------------------------------
+
+def _vol_level_label(delta: float) -> str:
+    if delta > 0:
+        return "相对高波动阶段"
+    if delta < 0:
+        return "相对低波动阶段"
+    return "接近中位水平"
+
 
 def _volatility_regime_insights(data: DataFrame) -> list[EdaInsight]:
     if "volatility_20d" not in data.columns:
@@ -597,13 +611,12 @@ def _volatility_regime_insights(data: DataFrame) -> list[EdaInsight]:
 
     if len(frame) == 1:
         row = frame.iloc[0]
-        state = "上升" if row["delta"] > 0 else ("下降" if row["delta"] < 0 else "持平")
         return [_insight(
-            CATEGORY_RISK, "波动率变化",
+            CATEGORY_RISK, "当前波动率水平",
             f"{row['symbol']} 最新 20 日波动率为 {_pct(row['last'])}，"
-            f"较区间中位数 {_pct(row['median'])} {state}。",
-            "以最新一个 20 日波动率相对其区间中位数判断。",
-            "波动率是风险的温度计，此处仅描述所选区间内的历史变化。",
+            f"较区间中位数 {_pct(row['median'])}，处于{_vol_level_label(row['delta'])}。",
+            "以最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+            "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
             DISCLAIMER,
         )]
 
@@ -611,26 +624,26 @@ def _volatility_regime_insights(data: DataFrame) -> list[EdaInsight]:
     if not rising.empty:
         top = rising.loc[rising["delta"].idxmax()]
         parts.append(
-            f"{len(rising)} 只最新波动率高于区间中位数，其中 {top['symbol']} 上升最多"
+            f"{len(rising)} 只处于相对高波动阶段，其中 {top['symbol']} 偏离中位数幅度最大"
         )
     if not falling.empty:
         bottom = falling.loc[falling["delta"].idxmin()]
         parts.append(
-            f"{len(falling)} 只低于区间中位数，其中 {bottom['symbol']} 下降最多"
+            f"{len(falling)} 只处于相对低波动阶段，其中 {bottom['symbol']} 偏离中位数幅度最大"
         )
     if parts:
         return [_insight(
-            CATEGORY_RISK, "波动率变化",
+            CATEGORY_RISK, "当前波动率水平",
             "；".join(parts) + "。",
-            "以各股票最新一个 20 日波动率相对其区间中位数判断。",
-            "波动率是风险的温度计，此处仅描述所选区间内的历史变化。",
+            "以各股票最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+            "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
             DISCLAIMER,
         )]
     return [_insight(
-        CATEGORY_RISK, "波动率变化",
-        "所有股票的最新 20 日波动率均与其区间中位数持平。",
-        "以各股票最新一个 20 日波动率相对其区间中位数判断。",
-        "波动率是风险的温度计，此处仅描述所选区间内的历史变化。",
+        CATEGORY_RISK, "当前波动率水平",
+        "所有股票的最新 20 日波动率均接近其区间中位水平。",
+        "以各股票最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+        "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
         DISCLAIMER,
     )]
 
