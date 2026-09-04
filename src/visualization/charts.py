@@ -16,12 +16,15 @@ from plotly.graph_objects import Figure
 
 from src.utils.exceptions import DataValidationError, NoDataError
 
-# Brand-neutral colour sequence reused across every figure. Kept at 10+
-# distinct colours because the target scale is 10 stocks per chart.
+# Brand-neutral 20-colour categorical palette (Vega "category20"). Sized for
+# the 2-20 stock comparison range so every line / bar keeps a distinct colour;
+# the legend label (the symbol) still carries the stock identity when colours
+# are ambiguous to the reader.
 _COLOR_SEQUENCE = [
-    "#4C78A8", "#F58518", "#54A24B", "#E45756",
-    "#72B7B2", "#B279A2", "#FF9DA6", "#9D755D",
-    "#B6992D", "#EDC948",
+    "#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD",
+    "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF",
+    "#AEC7E8", "#FFBB78", "#98DF8A", "#FF9896", "#C5B0D5",
+    "#C49C94", "#F7B6D2", "#C7C7C7", "#DBDB8D", "#9EDAE5",
 ]
 
 
@@ -122,14 +125,13 @@ def plot_candlestick(
     symbols: Sequence[str] | None = None,
     title: str | None = None,
 ) -> Figure:
-    """OHLC candlestick chart.
+    """OHLC candlestick chart for exactly one stock.
 
-    Draws one candlestick trace per symbol. Candlesticks are most meaningful for
-    a single stock, so pass ``symbols`` to focus on one symbol when the
-    DataFrame holds many.
-
-    ``symbols`` restricts which symbols are drawn; by default every symbol is
-    drawn.
+    Candlesticks are only meaningful for a single symbol at a time, so this
+    function renders one stock. When the input holds multiple symbols, pass
+    ``symbols`` to select a single one; if more than one symbol remains after
+    any selection, a ``DataValidationError`` is raised instead of overlaying
+    several stocks into one illegible chart.
     """
     _check_input(
         df, ("trade_date", "open", "high", "low", "close"),
@@ -141,35 +143,22 @@ def plot_candlestick(
                 "plot_candlestick 指定了 symbols 选股，但输入缺少 symbol 字段"
             )
         df = _filter_symbols(df, symbols, label="plot_candlestick")
-    fig = go.Figure()
-    multi = "symbol" in df.columns and df["symbol"].nunique() > 1
-
-    if multi:
-        for symbol, group in df.groupby("symbol"):
-            fig.add_trace(
-                go.Candlestick(
-                    x=group["trade_date"],
-                    open=group["open"],
-                    high=group["high"],
-                    low=group["low"],
-                    close=group["close"],
-                    name=str(symbol),
-                )
-            )
-    else:
-        # 单一股票（或选股后只剩 1 只）时保留 symbol 作为图例名
-        name = str(df["symbol"].iloc[0]) if "symbol" in df.columns else "价格"
-        fig.add_trace(
-            go.Candlestick(
-                x=df["trade_date"],
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                name=name,
-            )
+    if "symbol" in df.columns and df["symbol"].nunique() > 1:
+        raise DataValidationError(
+            "plot_candlestick 仅支持单只股票，请通过 symbols 参数选择一只股票"
         )
-
+    # 单只股票（或选股后只剩 1 只）时保留 symbol 作为图例名
+    name = str(df["symbol"].iloc[0]) if "symbol" in df.columns else "价格"
+    fig = go.Figure(
+        go.Candlestick(
+            x=df["trade_date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name=name,
+        )
+    )
     fig.update_layout(title=title, xaxis_title="交易日期", yaxis_title="价格")
     fig.update_xaxes(rangeslider_visible=False)
     return _apply_theme(fig)
