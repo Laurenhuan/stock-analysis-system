@@ -252,3 +252,228 @@ def run_clustering(
         features=list(FEATURE_COLS),
         k=N_CLUSTERS,
     )
+
+
+# ── 第三步：动态簇标签生成 ─────────────────────────────
+
+# 特征值等级 → 中文描述的映射
+_LABEL_MAP: dict[str, dict[str, str]] = {
+    "mean_return": {
+        "high": "相对高收益",
+        "mid": "相对中等收益",
+        "low": "相对低收益",
+        "close": "相对接近收益",
+    },
+    "volatility": {
+        "high": "相对高波动",
+        "mid": "相对中等波动",
+        "low": "相对低波动",
+        "close": "相对接近波动",
+    },
+    "max_drawdown": {
+        "high": "相对小回撤",
+        "mid": "相对中等回撤",
+        "low": "相对大回撤",
+        "close": "相对接近回撤",
+    },
+}
+
+# 当所有簇的某个特征值几乎相同时的阈值
+# 使用特征值范围的 1% 作为判断"接近"的阈值
+_CLOSE_THRESHOLD_RATIO: float = 0.01
+
+
+def _validate_cluster_centers(df: pd.DataFrame) -> None:
+    """校验 cluster_centers 输入数据质量。"""
+    _validate_dataframe(df, "generate_cluster_labels")
+
+    if df.empty:
+        raise DataValidationError("generate_cluster_labels：输入 DataFrame 为空")
+
+    required = {"cluster", *FEATURE_COLS}
+    missing = required - set(df.columns)
+    if missing:
+        raise DataValidationError(
+            f"generate_cluster_labels：缺少必要列: {missing}"
+        )
+
+    if df["cluster"].duplicated().any():
+        dupes = df[df["cluster"].duplicated()]["cluster"].tolist()
+        raise DataValidationError(
+            f"generate_cluster_labels：存在重复 cluster ID: {dupes}"
+        )
+
+    for col in FEATURE_COLS:
+        _validate_numeric_column(df, col, "generate_cluster_labels")
+
+    # 校验 cluster 列为数值型
+    try:
+        pd.to_numeric(df["cluster"], errors="raise")
+    except (ValueError, TypeError) as e:
+        raise DataValidationError(
+            f"generate_cluster_labels：列 'cluster' 数值转换失败: {e}"
+        ) from e
+
+
+def _rank_with_ties(values: np.ndarray) -> np.ndarray:
+    """对数组进行排名，相同值获得相同 rank。
+
+    rank 0 = 最高值，rank k-1 = 最低值。
+    使用 pandas rank(method='min')：并列值获得相同 rank（取最小位置）。
+
+    返回长度为 len(values) 的整数 rank 数组。
+    """
+    # pandas rank 默认 ascending=True（值越小 rank 越小）
+    # 我们需要降序排列（值越大 rank 越小），所以 ascending=False
+    # 然后转换为 0-based index
+    series = pd.Series(values)
+    # rank(ascending=False): 最高值 rank=1, 次高 rank=2, ...
+    # 减 1 转为 0-based: 最高值 rank=0, 次高 rank=1, ...
+    ranks = (series.rank(method="min", ascending=False) - 1).astype(int).values
+    return ranks
+
+
+def generate_cluster_labels(
+    cluster_centers: pd.DataFrame,
+) -> dict[int, str]:
+    """根据簇中心特征的相对排序，动态生成中文簇标签。
+
+    标签格式：[所选历史区间]相对X收益-相对Y波动-相对Z回撤型
+
+    排序逻辑：
+    - 按每个特征值从高到低排名
+    - rank 0 = 最高/最好，rank k-1 = 最低/最差
+    - 如果所有簇的某个特征值几乎相同（范围 < 阈值），统一标为"相对接近"
+    - 并列值获得相同等级描述
+
+    参数：
+        cluster_centers: 包含 cluster 列和 FEATURE_COLS 的 DataFrame
+
+    返回：
+        dict[int, str]: 簇编号 → 中文标签
+
+    异常：
+        DataValidationError: 空表、缺列、NaN/inf、重复 cluster ID、非数值指标
+    """
+    _validate_cluster_centers(cluster_centers)
+
+    k = len(cluster_centers)
+    labels: dict[int, str] = {}
+
+    # 复制一份，避免修改原始传入的 DataFrame
+    centers = cluster_centers.copy()
+
+    # 为每个特征计算 rank
+    for col in FEATURE_COLS:
+        values = centers[col].values.astype(float)
+        ranks = _rank_with_ties(values)
+        centers[f"_rank_{col}"] = ranks
+
+        # 计算特征值范围，判断是否所有值都接近
+        val_range = values.max() - values.min()
+        centers[f"_range_{col}"] = val_range
+
+    # 为每个簇生成复合标签
+    for _, row in centers.iterrows():
+        cluster_id = int(row["cluster"])
+
+        renditions = []
+        for col in FEATURE_COLS:
+            val_range = row[f"_range_{col}"]
+            values = centers[col].values.astype(float)
+            threshold = max(abs(values.max()), abs(values.min()), 1e-10) * _CLOSE_THRESHOLD_RATIO
+
+            # 所有值几乎相同 → 标为"相对接近"
+            if val_range <= threshold:
+                renditions.append(_LABEL_MAP[col]["close"])
+            else:
+                # 使用实际极值判断，而非 rank 位置
+                # 这样并列值（无论并列最高还是最低）都能得到正确标签
+                current_val = float(row[col])
+                if current_val == values.max():
+                    renditions.append(_LABEL_MAP[col]["high"])
+                elif current_val == values.min():
+                    renditions.append(_LABEL_MAP[col]["low"])
+                else:
+                    renditions.append(_LABEL_MAP[col]["mid"])
+
+        compound = "-".join(renditions)
+        labels[cluster_id] = f"[所选历史区间]{compound}型"
+
+    return labels
+
+
+# ── 第四步：标签解读输出 ──────────────────────────────
+
+
+def build_label_interpretation(
+    clustering_result: ClusteringResult,
+    date_range: tuple[str, str] | None = None,
+) -> dict:
+    """组装完整的标签解读信息，供 Role 1 渲染展示。
+
+    直接根据 cluster_centers 调用 generate_cluster_labels() 生成标签。
+    cluster_label 不在 ClusteringResult Contract 中，而是由此函数动态生成。
+
+    返回字典包含以下字段：
+    - cluster_label: dict[int, str] — 簇编号 → 中文标签
+    - 画像指标: list[str] — 聚类使用的特征列名
+    - 簇数量: int — 聚类簇数 k
+    - 簇中心特征: list[dict] — 每个簇的中心特征值
+    - 标签依据: str — 标签生成逻辑说明
+    - 样本范围: dict — 聚类涉及的股票数量及可选日期范围
+    - 免责声明: str — 免责声明文本
+
+    参数：
+        clustering_result: run_clustering 的返回结果
+        date_range: 可选的 (start_date, end_date) 元组，用于标注样本时间范围
+    """
+    centers = clustering_result["cluster_centers"]
+    k = clustering_result["k"]
+
+    # 直接从 cluster_centers 生成标签
+    cluster_label = generate_cluster_labels(centers)
+
+    # 构建簇中心特征列表
+    center_features = []
+    for _, row in centers.iterrows():
+        center_features.append({
+            "cluster": int(row["cluster"]),
+            "mean_return": float(row["mean_return"]),
+            "volatility": float(row["volatility"]),
+            "max_drawdown": float(row["max_drawdown"]),
+        })
+
+    # 标签依据说明
+    tagline_basis = (
+        "标签基于聚类中心特征的相对排序动态生成："
+        "比较各簇的平均收益率、波动率、最大回撤的中心值，"
+        "按从高到低排序后赋予对应中文描述。"
+        "标签中的'相对'表示仅针对当前数据集内各簇的横向比较，"
+        "'所选历史区间'表示特征值依赖于输入数据的时间范围。"
+        "当所有簇的某个特征值几乎相同时，标为'相对接近'。"
+    )
+
+    # 样本范围
+    n_stocks = len(clustering_result["profiles"])
+    sample_scope: dict = {"股票数量": n_stocks}
+    if date_range is not None:
+        sample_scope["起始日期"] = date_range[0]
+        sample_scope["截止日期"] = date_range[1]
+
+    # 免责声明
+    disclaimer = (
+        "本标签仅基于历史数据的统计特征生成，不构成任何投资建议。"
+        "股票的聚类标签可能随输入数据的时间区间不同而变化，"
+        "投资者应独立判断并承担投资风险。"
+    )
+
+    return {
+        "cluster_label": cluster_label,
+        "画像指标": list(clustering_result["features"]),
+        "簇数量": k,
+        "簇中心特征": center_features,
+        "标签依据": tagline_basis,
+        "样本范围": sample_scope,
+        "免责声明": disclaimer,
+    }
