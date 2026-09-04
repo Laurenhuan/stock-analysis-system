@@ -41,7 +41,7 @@
 - [x] R23（Role 1）用 `st.navigation` / `st.Page` 和 `st.session_state` 统一股票、日期、数据源状态，进入子页面后不重复选择
 - [x] R24（Role 1 / Role 2）让 EDA、监督学习和聚类均可使用 AkShare 获取到最新交易日的历史日线；实时快照保持独立，不直接作为 EDA 或模型训练输入
 - [x] R25（Role 3）验证 EDA 对用户自选股票数量和日期区间的适应性，补部分缺失、样本不足和不同上市日期的结论/测试
-- [ ] R26（Role 4）验证 Decision Tree 对单只用户自选股票和日期区间的适应性，明确最小有效样本、80/20 时间切分和测试集交易日数量
+- [x] R26（Role 4）验证 Decision Tree 对单只用户自选股票和日期区间的适应性，明确最小有效样本、80/20 时间切分和测试集交易日数量
 - [ ] R27（Role 6）验证 Linear Regression 对单只用户自选股票和日期区间的适应性，明确滚动窗口、最小样本、训练/测试区间及指标解释
 - [x] R28（Role 5）支持用户自选至少 3 只股票进行聚类，并根据原始尺度中心动态生成每个 Cluster 的中文画像和相对高/中/低解释
 - [x] R29（Role 1 / Role 5 / Role 6 Review）评审 `k` 是否允许调整；结论为 Contract / P0 范围变更未获批，继续固定 `KMeans(k=3)`
@@ -51,8 +51,9 @@
 
 ## 当前验收状态
 
-- Role 2 动态代码/名称搜索通过 PR !28、Role 3 EDA 增强通过 PR !29、Role 5 聚类画像通过 PR !27 合入 Gitee `main`；Role 4 PR !30 尚未通过 Review，未纳入本轮集成。
-- Role 1 已在 `feat/ui-workspaces` 接入上述三个已通过模块；全仓测试：`400 passed`，本轮定向 Service、页面与分层测试：`39 passed`。
+- Role 2 动态搜索 PR !28、Role 3 EDA 增强 PR !29、Role 5 聚类画像 PR !27、Role 1 统一工作区 PR !32、Role 4 动态区间分类 PR !33 均已合入 Gitee `main`。
+- 当前仅 R27（Role 6 动态区间回归验证）尚未完成；期末交付与 GitHub 镜像仍按阶段保留。
+- Role 1 定向测试：`39 passed`，其合入前全仓：`400 passed`；Role 4 专项：`26 passed`，其合入后全仓：`404 passed`。
 - D4 Role 1 的定向测试、全仓测试、警告说明和在线冒烟结果已保存至 `docs/test_logs/D4-role1.txt`。
 - 在线股票目录以“茅台”实测返回 `600519.SH / 贵州茅台`；目录不可用时页面仍允许直接输入代码，历史在线结果不落本地 CSV。
 - 在线行情不落本地 CSV；页面明确展示 Sample/在线状态、实际 provider、抓取时间及延迟说明。
