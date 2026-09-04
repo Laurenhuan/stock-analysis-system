@@ -315,3 +315,93 @@ def test_missing_close_skips_trend_and_flags_quality(multi_df):
     titles = _titles(insights)
     assert "缺少关键字段" in titles
     assert not any(t.startswith("趋势：") for t in titles)
+
+
+# --- dynamic scale / arbitrary dates / partial validity ----------------------
+
+@pytest.mark.parametrize("n", [2, 3, 8, 15, 20])
+def test_variable_symbol_count_is_deterministic(n):
+    closes = {f"STK{i:02d}": [100.0 + i + 5 * d for d in range(6)] for i in range(n)}
+    df = _make_df(closes)
+    insights = build_eda_insights(df)
+    assert insights
+    shuffled = df.sample(frac=1, random_state=0).reset_index(drop=True)
+    assert insights == build_eda_insights(shuffled)
+
+
+def test_arbitrary_date_range_and_symbols():
+    # 非 2024 年、非固定演示股票：区间与股票身份均来自输入。
+    base = pd.Timestamp("2021-07-05")
+    closes = {"AAA": [50.0, 52.0, 51.0, 53.0], "BBB": [30.0, 31.0, 30.5, 32.0]}
+    rows = []
+    for sym, cs in closes.items():
+        for i, c in enumerate(cs):
+            prev = cs[i - 1] if i > 0 else None
+            rows.append({
+                "symbol": sym, "trade_date": base + pd.Timedelta(days=i),
+                "open": c * 0.99, "high": c * 1.01, "low": c * 0.98, "close": c,
+                "volume": 1000.0, "amount": c * 1000.0,
+                "return": c / prev - 1 if prev else np.nan,
+                "drawdown": c / max(cs[: i + 1]) - 1,
+                "ma5": np.nan, "ma20": np.nan,
+            })
+    df = pd.DataFrame(rows)
+    text = _all_text(build_eda_insights(df))
+    assert "2021-07-05" in text
+    assert "2024" not in text
+    assert "AAA" in text and "BBB" in text
+    assert "600519" not in text and "000001" not in text
+
+
+def test_two_stocks_one_all_nan_gives_overview_not_ranking():
+    # 2 只股票只有 1 只有效收益 → 输出「收益概览」而非把同一只排成最高又最低。
+    df = _make_df({"A": [100.0, 110.0, 105.0], "B": [10.0, 9.0, 9.5]})
+    df.loc[df["symbol"] == "B", "return"] = np.nan
+    df.loc[df["symbol"] == "B", "drawdown"] = np.nan
+    insights = build_eda_insights(df)
+    titles = _titles(insights)
+    assert "收益概览" in titles
+    assert "累计收益最高" not in titles
+    assert "累计收益最低" not in titles
+    assert "nan%" not in _all_text(insights)
+
+
+def test_partial_all_nan_stocks_not_ranked():
+    # 部分股票全 NaN：排名只在有效股票之间进行，且不出现 nan%。
+    df = _make_df({
+        "A": [100.0, 110.0, 105.0, 120.0, 115.0],
+        "B": [10.0, 9.0, 9.5, 10.0, 10.5],
+        "C": [20.0, 22.0, 19.0, 25.0, 24.0],
+    })
+    df.loc[df["symbol"] == "C", "return"] = np.nan
+    df.loc[df["symbol"] == "C", "drawdown"] = np.nan
+    insights = build_eda_insights(df)
+    text = _all_text(insights)
+    assert "nan%" not in text
+    for title in ("累计收益最高", "累计收益最低", "波动最大", "波动最小",
+                  "回撤最深", "回撤最浅"):
+        ins = _by_title(insights, title)
+        if ins is not None:
+            assert "C" not in ins["finding"], f"{title} 不应把全 NaN 的 C 排入"
+
+
+def test_partial_moving_average_formation():
+    # A 25 天（均线均形成），B 仅 3 天（均未形成）。
+    df = _make_df({"A": [100.0 + i for i in range(25)], "B": [10.0, 11.0, 12.0]})
+    insights = build_eda_insights(df)
+    trend_a = _by_title(insights, "趋势：A")
+    trend_b = _by_title(insights, "趋势：B")
+    assert trend_a is not None and trend_b is not None
+    assert "尚未形成" in trend_b["caveat"]
+    assert "尚未形成" not in trend_a["caveat"]
+
+
+def test_no_common_trading_days_graceful():
+    df = pd.DataFrame([
+        _bare_row("A", pd.Timestamp("2022-01-03"), 0.01, 100.0),
+        _bare_row("A", pd.Timestamp("2022-01-04"), -0.01, 99.0),
+        _bare_row("B", pd.Timestamp("2022-03-01"), 0.02, 50.0),
+        _bare_row("B", pd.Timestamp("2022-03-02"), 0.03, 51.0),
+    ])
+    insights = build_eda_insights(df)
+    assert _by_title(insights, "相关性样本不足") is not None
