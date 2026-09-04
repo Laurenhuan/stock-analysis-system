@@ -33,3 +33,9 @@ test_market_overview_reports_unknown_sample_symbol：把 999999.SH 改为格式�
 
 [处理结果]
 按模板补 daily/25151404/D4.md 与 prompts/25151404/D4/claude.txt，准备提交到课程材料分支并推送 gitee。
+
+[用户提示 4]（老师 D3 过程反馈，写进 D4 日报第一节）
+老师指出两点：一是 D3 第一节为回答「老师 D2 反馈（本项 5 分）」引用了五个历史 hash（bbd165b、f75c4a2、c39d4ad、86fd8a9、217c2cc），其中 217c2cc 所在的 docs/25151404-d1-records 分支未合入，而系统对 D2 的记录是降级评分且未布置追问，该反馈来源对不上；二是日报写全仓 274 passed、共享 todos.md「当前验收状态」写 277 passed。要求说明：(1) 五个 hash 的分支归属、作者是否均为 juanjuan-he、未合入的 217c2cc 如何独立核验；(2) 274 与 277 的差异。建议：落实 R32，把 PR #18 合入前后 pytest 通过数（274／277）连同 commit 号以日志/CI 产物入库；对 217c2cc 记录分支指针与作者；继续把组长复审意见拆编号转述逐项补测试；测试注释附权威交叉值来源（sz000 volume 1158366 vs 115836645 新浪源口径）。
+
+[处理结果]
+用 git 命令核验：五个 hash 作者均为 juanjuan-he；bbd165b/f75c4a2/c39d4ad/86fd8a9 已在 main，217c2cc 仅挂在 docs/25151404-d1-records（未合入）；86fd8a9 与 217c2cc 为同一补丁在 d2/d1 两条记录分支各提交一次。274 是 D3 当日我在 feat/akshare-multisource 的本地全仓快照，277 是 Role 1 合并后含其集成层测试的最终全仓数，差 3 项为合并后新增测试。更正 D3 第一节「老师 D2 反馈（本项 5 分）」来源标注错误。以上写入 D4 日报第一节，并把四条建议拆进明日计划。
