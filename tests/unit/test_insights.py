@@ -14,6 +14,7 @@ from src.analysis.eda import returns_comparison
 from src.analysis.insights import (
     CATEGORY_CORRELATION,
     CATEGORY_DATA_QUALITY,
+    CATEGORY_DISTRIBUTION,
     CATEGORY_PERFORMANCE,
     CATEGORY_RISK,
     CATEGORY_TREND,
@@ -110,7 +111,7 @@ def test_returns_list_of_structured_insights(multi_df):
         }
         assert i["category"] in {
             CATEGORY_PERFORMANCE, CATEGORY_RISK, CATEGORY_TREND,
-            CATEGORY_CORRELATION, CATEGORY_DATA_QUALITY,
+            CATEGORY_CORRELATION, CATEGORY_DATA_QUALITY, CATEGORY_DISTRIBUTION,
         }
         assert i["caveat"].endswith(DISCLAIMER)
 
@@ -405,3 +406,77 @@ def test_no_common_trading_days_graceful():
     ])
     insights = build_eda_insights(df)
     assert _by_title(insights, "相关性样本不足") is not None
+
+
+# --- distribution / extreme moves / volatility regime ------------------------
+
+def test_distribution_insight_names_fattest_tail(multi_df):
+    insights = build_eda_insights(multi_df)
+    assert _by_title(insights, "厚尾最明显") is not None
+    assert _by_title(insights, "偏度最明显") is not None
+
+
+def test_single_stock_distribution_uses_overview(single_df):
+    insights = build_eda_insights(single_df)
+    titles = _titles(insights)
+    assert "收益分布形态" in titles
+    assert "厚尾最明显" not in titles
+    assert "偏度最明显" not in titles
+
+
+def test_extreme_insights_name_biggest_day(multi_df):
+    insights = build_eda_insights(multi_df)
+    up = _by_title(insights, "最大单日收益")
+    down = _by_title(insights, "最小单日收益")
+    assert up is not None and down is not None
+    assert up["category"] == CATEGORY_RISK
+    assert "nan%" not in _all_text(insights)
+
+
+def test_all_nan_returns_distribution_and_extreme_graceful(multi_df):
+    df = multi_df.copy()
+    df["return"] = np.nan
+    insights = build_eda_insights(df)
+    titles = _titles(insights)
+    assert "分布数据不足" in titles
+    assert "极端涨跌数据不足" in titles
+    assert "nan%" not in _all_text(insights)
+
+
+def test_volatility_regime_skipped_without_column(multi_df):
+    insights = build_eda_insights(multi_df)
+    assert _by_title(insights, "波动率变化") is None
+
+
+def test_volatility_regime_present_with_column():
+    base = pd.Timestamp("2024-01-01")
+    rows = []
+    for sym, vols in {"A": [0.10, 0.11, 0.12], "B": [0.20, 0.18, 0.16]}.items():
+        for i, v in enumerate(vols):
+            rows.append({
+                "symbol": sym, "trade_date": base + pd.Timedelta(days=i),
+                "return": 0.01,
+                "volatility_20d": v,
+            })
+    insights = build_eda_insights(pd.DataFrame(rows))
+    vol = _by_title(insights, "波动率变化")
+    assert vol is not None
+    assert "A" in vol["finding"] and "B" in vol["finding"]
+
+
+def test_volatility_regime_deterministic_under_shuffle():
+    base = pd.Timestamp("2024-01-01")
+    offset = {"A": 0.0, "B": 0.005, "C": -0.003}
+    rows = []
+    for sym in ("A", "B", "C"):
+        for i in range(6):
+            rows.append({
+                "symbol": sym,
+                "trade_date": base + pd.Timedelta(days=i),
+                "return": 0.01 * (i % 3) + offset[sym],
+                "volatility_20d": 0.1 + 0.01 * i * (1 if sym == "C" else -1),
+            })
+    df = pd.DataFrame(rows)
+    before = build_eda_insights(df)
+    shuffled = df.sample(frac=1, random_state=7).reset_index(drop=True)
+    assert before == build_eda_insights(shuffled)
