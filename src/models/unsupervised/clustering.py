@@ -246,9 +246,158 @@ def run_clustering(
     )
     result_centers.insert(0, "cluster", range(N_CLUSTERS))
 
+    # ── 生成动态中文簇标签 ──
+    # 根据簇中心特征的相对排序，生成中文标签
+    cluster_label = generate_cluster_labels(result_centers)
+
     return ClusteringResult(
         profiles=result_profiles,
         cluster_centers=result_centers,
         features=list(FEATURE_COLS),
         k=N_CLUSTERS,
+        cluster_label=cluster_label,
     )
+
+
+# ── 第三步：动态簇标签生成 ─────────────────────────────
+
+
+# 特征排名 → 中文描述的映射
+# rank 0 = 特征值最高，rank k-1 = 特征值最低
+# 对于 k=3：rank 0 = 高，rank 1 = 中等，rank 2 = 低
+# 对于 k>3：rank 0 = 高，rank k-1 = 低，其余 = 中等
+_LABEL_RENDITIONS: dict[str, tuple[str, str, str]] = {
+    "mean_return": ("相对高收益", "相对中等收益", "相对低收益"),
+    "volatility": ("相对高波动", "相对中等波动", "相对低波动"),
+    "max_drawdown": ("相对小回撤", "相对中等回撤", "相对大回撤"),
+}
+
+
+def generate_cluster_labels(
+    cluster_centers: pd.DataFrame,
+) -> dict[int, str]:
+    """根据簇中心特征的相对排序，动态生成中文簇标签。
+
+    标签格式：[所选历史区间]相对X收益-相对Y波动-相对Z回撤型
+
+    排序逻辑（以 3 个簇为例）：
+    - mean_return：值最高 → rank 0 → "相对高收益"，最低 → rank 2 → "相对低收益"
+    - volatility：值最高 → rank 0 → "相对高波动"，最低 → rank 2 → "相对低波动"
+    - max_drawdown：值最高（最接近 0）→ rank 0 → "相对小回撤"，最低（最负）→ rank 2 → "相对大回撤"
+
+    参数：
+        cluster_centers: 包含 cluster 列和 FEATURE_COLS 的 DataFrame
+
+    返回：
+        dict[int, str]: 簇编号 → 中文标签
+
+    注意：
+        - 标签包含"相对"限定词，表示仅针对当前数据集的相对比较
+        - 标签包含"所选历史区间"限定，不构成投资建议
+    """
+    k = len(cluster_centers)
+    labels: dict[int, str] = {}
+
+    # 复制一份，避免修改原始传入的 DataFrame
+    centers = cluster_centers.copy()
+
+    for col in FEATURE_COLS:
+        # 按特征值从高到低排序，获取排名
+        # rank 0 = 最高值，rank k-1 = 最低值
+        sorted_idx = centers[col].values.argsort()[::-1]
+        ranks = np.empty(k, dtype=int)
+        ranks[sorted_idx] = np.arange(k)
+        centers[f"_rank_{col}"] = ranks
+
+    # 为每个簇生成复合标签
+    for _, row in centers.iterrows():
+        cluster_id = int(row["cluster"])
+
+        # 取每个特征的排名对应的中文描述
+        # rank 0 → 最高/最好，rank k-1 → 最低/最差，其余 → 中等
+        renditions = []
+        for col in FEATURE_COLS:
+            rank = int(row[f"_rank_{col}"])
+            high, mid, low = _LABEL_RENDITIONS[col]
+            if rank == 0:
+                renditions.append(high)
+            elif rank == k - 1:
+                renditions.append(low)
+            else:
+                renditions.append(mid)
+
+        # 组合成复合标签
+        # 格式：[所选历史区间]相对X收益-相对Y波动-相对Z回撤型
+        compound = "-".join(renditions)
+        labels[cluster_id] = f"[所选历史区间]{compound}型"
+
+    return labels
+
+
+# ── 第四步：标签解读输出 ──────────────────────────────
+
+
+def build_label_interpretation(
+    clustering_result: ClusteringResult,
+    date_range: tuple[str, str] | None = None,
+) -> dict:
+    """组装完整的标签解读信息，供 Role 1 渲染展示。
+
+    返回字典包含以下字段：
+    - cluster_label: dict[int, str] — 簇编号 → 中文标签
+    - 画像指标: list[str] — 聚类使用的特征列名
+    - 簇数量: int — 聚类簇数 k
+    - 簇中心特征: list[dict] — 每个簇的中心特征值
+    - 标签依据: str — 标签生成逻辑说明
+    - 样本范围: dict — 聚类涉及的股票数量及可选日期范围
+    - 免责声明: str — 免责声明文本
+
+    参数：
+        clustering_result: run_clustering 的返回结果
+        date_range: 可选的 (start_date, end_date) 元组，用于标注样本时间范围
+    """
+    centers = clustering_result["cluster_centers"]
+    k = clustering_result["k"]
+
+    # 构建簇中心特征列表
+    center_features = []
+    for _, row in centers.iterrows():
+        center_features.append({
+            "cluster": int(row["cluster"]),
+            "mean_return": float(row["mean_return"]),
+            "volatility": float(row["volatility"]),
+            "max_drawdown": float(row["max_drawdown"]),
+        })
+
+    # 标签依据说明
+    tagline_basis = (
+        "标签基于聚类中心特征的相对排序动态生成："
+        "比较各簇的平均收益率、波动率、最大回撤的中心值，"
+        "按从高到低排序后赋予对应中文描述。"
+        "标签中的'相对'表示仅针对当前数据集内各簇的横向比较，"
+        "'所选历史区间'表示特征值依赖于输入数据的时间范围。"
+    )
+
+    # 样本范围
+    n_stocks = len(clustering_result["profiles"])
+    sample_scope: dict = {"股票数量": n_stocks}
+    if date_range is not None:
+        sample_scope["起始日期"] = date_range[0]
+        sample_scope["截止日期"] = date_range[1]
+
+    # 免责声明
+    disclaimer = (
+        "本标签仅基于历史数据的统计特征生成，不构成任何投资建议。"
+        "股票的聚类标签可能随输入数据的时间区间不同而变化，"
+        "投资者应独立判断并承担投资风险。"
+    )
+
+    return {
+        "cluster_label": clustering_result["cluster_label"],
+        "画像指标": list(clustering_result["features"]),
+        "簇数量": k,
+        "簇中心特征": center_features,
+        "标签依据": tagline_basis,
+        "样本范围": sample_scope,
+        "免责声明": disclaimer,
+    }
