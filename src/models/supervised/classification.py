@@ -123,11 +123,7 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def run_classification(
-    df: pd.DataFrame,
-    start_date: str | None = None,
-    end_date: str | None = None,
-) -> ClassificationResult:
+def run_classification(df: pd.DataFrame) -> ClassificationResult:
     """Train a DecisionTreeClassifier and evaluate on a time-ordered test set.
 
     Parameters
@@ -135,18 +131,13 @@ def run_classification(
     df : pd.DataFrame
         Raw market data for a **single** stock.  Must contain at least
         ``trade_date``, ``close``, ``volume``.  Rows must be sorted by
-        ``trade_date`` ascending.
-    start_date : str, optional
-        Inclusive start date for filtering (format: 'YYYY-MM-DD').
-    end_date : str, optional
-        Inclusive end date for filtering (format: 'YYYY-MM-DD').
+        ``trade_date`` ascending.  Date filtering is handled by the caller
+        (Role 1 Service); this function processes whatever rows it receives.
 
     Returns
     -------
     ClassificationResult
-        Dict with keys model, feature_names, metrics, predictions,
-        and sample metadata (n_raw_trading_days, n_effective_samples,
-        n_train_samples, n_test_samples, feature_importance).
+        Dict with keys model, feature_names, metrics, predictions.
 
     Raises
     ------
@@ -161,26 +152,13 @@ def run_classification(
     # --- validate input ---
     _validate_input(df)
 
-    # --- date range filtering ---
-    data = df.copy()
-    if start_date is not None:
-        data = data[data["trade_date"] >= start_date]
-    if end_date is not None:
-        data = data[data["trade_date"] <= end_date]
-    data = data.reset_index(drop=True)
-
-    # Record raw trading days (after date filtering, before feature eng)
-    n_raw_trading_days = len(data)
-
     # --- feature engineering ---
-    data = _build_features(data)
+    data = _build_features(df)
 
-    n_effective_samples = len(data)
-
-    if n_effective_samples < _MIN_SAMPLES:
+    if len(data) < _MIN_SAMPLES:
         raise InsufficientDataError(
             f"Need at least {_MIN_SAMPLES} samples after feature engineering, "
-            f"got {n_effective_samples}"
+            f"got {len(data)}"
         )
 
     # --- time-ordered 80/20 split (Contract v0.2: fixed ratio) ---
@@ -234,19 +212,9 @@ def run_classification(
     )
     predictions = predictions[list(CLASSIFICATION_PREDICTION_COLUMNS)]
 
-    # --- sample metadata ---
-    n_train_samples = len(X_train)
-    n_test_samples = len(X_test)
-    feature_importance = model.feature_importances_.tolist()
-
     return {
         "model": model,
         "feature_names": FEATURE_NAMES,
         "metrics": metrics,
         "predictions": predictions,
-        "n_raw_trading_days": n_raw_trading_days,
-        "n_effective_samples": n_effective_samples,
-        "n_train_samples": n_train_samples,
-        "n_test_samples": n_test_samples,
-        "feature_importance": feature_importance,
     }

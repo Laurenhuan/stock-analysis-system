@@ -1,10 +1,6 @@
 """Importable output schemas for supervised learning Contract v0.2."""
 
-from __future__ import annotations
-
 from typing import Any, TypedDict
-
-from typing_extensions import NotRequired
 
 from pandas import DataFrame
 
@@ -28,26 +24,12 @@ class RegressionMetrics(TypedDict):
 
 
 class ClassificationResult(TypedDict):
-    """Stable top-level result returned by classification use cases.
-
-    Core fields (always present):
-        model, feature_names, metrics, predictions
-
-    Extended fields (added for dynamic single-stock input, optional):
-        n_raw_trading_days, n_effective_samples,
-        n_train_samples, n_test_samples, feature_importance
-    """
+    """Stable top-level result returned by classification use cases."""
 
     model: Any
     feature_names: list[str]
     metrics: ClassificationMetrics
     predictions: DataFrame
-    # --- sample metadata (added for dynamic single-stock input) ---
-    n_raw_trading_days: NotRequired[int]
-    n_effective_samples: NotRequired[int]
-    n_train_samples: NotRequired[int]
-    n_test_samples: NotRequired[int]
-    feature_importance: NotRequired[list[float]]
 
 
 class RegressionResult(TypedDict):

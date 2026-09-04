@@ -61,8 +61,7 @@ def test_supervised_result_keys_and_metrics_are_stable() -> None:
         {"model", "feature_names", "metrics", "predictions"}
     )
 
-    # ClassificationResult: core keys are required, metadata keys are optional
-    assert expected_result_keys.issubset(ClassificationResult.__required_keys__)
+    assert ClassificationResult.__required_keys__ == expected_result_keys
     assert RegressionResult.__required_keys__ == expected_result_keys
     assert ClassificationMetrics.__required_keys__ == frozenset(
         {"accuracy", "confusion_matrix"}

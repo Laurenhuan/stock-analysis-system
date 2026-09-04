@@ -178,17 +178,3 @@ def test_confusion_matrix_labels_order() -> None:
     # Total samples in CM should equal test set size
     total = sum(sum(row) for row in cm)
     assert total == len(result["predictions"])
-
-
-def test_sample_metadata_consistent_with_predictions() -> None:
-    """n_test_samples should equal the number of predictions."""
-    df = _make_df()
-    result = run_classification(df)
-    assert result["n_test_samples"] == len(result["predictions"])
-
-
-def test_n_raw_trading_days_not_less_than_effective() -> None:
-    """Raw trading days should be >= effective samples (feature eng removes rows)."""
-    df = _make_df()
-    result = run_classification(df)
-    assert result["n_raw_trading_days"] >= result["n_effective_samples"]
