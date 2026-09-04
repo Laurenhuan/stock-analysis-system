@@ -21,13 +21,13 @@ Role 6 regression --------------------+
 
 Role 2-6 produce importable, tested domain functions. Role 1 coordinates
 interfaces, calls those functions through `src/services/`, maps domain errors
-to user-facing states and integrates results into `pages/`.
+to user-facing states and integrates results into `app_pages/`.
 
 ## Ownership matrix
 
 | Role | Team label | Scope | Primary implementation paths | Branch |
 | --- | --- | --- | --- | --- |
-| Role 1 — Architecture and Application Integration | Project owner | Streamlit, Service Layer, interface coordination, central repository, PRs and final integration | `app.py`, `pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, architecture and governance docs | Task-specific Role 1 branch |
+| Role 1 — Architecture and Application Integration | Project owner | Streamlit, Service Layer, interface coordination, central repository, PRs and final integration | `app.py`, `app_pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, architecture and governance docs | Task-specific Role 1 branch |
 | Role 2 — Financial Data Engineering | 嗯嗯 | A-share acquisition, cleaning, standard DataFrame, common indicators and approved Sample fallback | `src/data/`, data unit tests and coordinated `data/sample/` files | `feat/data-foundation` |
 | Role 3 — Financial Analysis and Visualization | 默念 | EDA, descriptive statistics, reusable Plotly figures and multi-stock comparison | `src/analysis/`, `src/visualization/` and matching unit tests | `feat/eda-visualization` |
 | Role 4 — Supervised Classification | 周毅谦 | Decision Tree, next-day up/non-up classification, Accuracy and Confusion Matrix | `src/models/supervised/classification.py` and classification/leakage tests | `feat/decision-tree-classification` |
@@ -118,7 +118,7 @@ edit.
 
 Unless Role 1 coordinates a cross-role change, Role 2-6 must not modify:
 
-- `app.py` or `pages/`;
+- `app.py` or `app_pages/`;
 - `src/services/`;
 - `src/contracts/` or `docs/contracts/`;
 - `src/utils/`;

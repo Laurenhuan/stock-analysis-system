@@ -19,6 +19,7 @@ MODULES = (
     "src.services.analysis_service",
     "src.services.clustering_service",
     "src.services.supervised_service",
+    "src.services.workspace_service",
     "src.utils.exceptions",
 )
 

@@ -1,5 +1,6 @@
 """Cross-module tests for Role 1 Service orchestration."""
 
+import pandas as pd
 import pytest
 from plotly.graph_objects import Figure
 
@@ -10,6 +11,7 @@ from src.services import (
     run_classification_dashboard,
     run_regression_dashboard,
     run_stock_clustering,
+    run_stock_clustering_dashboard,
 )
 from src.utils.exceptions import NoDataError
 
@@ -30,6 +32,8 @@ def test_eda_service_builds_tables_and_figures(sample_market_data) -> None:
 
     assert dashboard["date_ranges"].shape[0] == 3
     assert dashboard["risk_return"].shape[0] == 3
+    assert dashboard["return_distribution"].shape[0] == 3
+    assert dashboard["extreme_returns"].shape[0] == 3
     assert dashboard["correlation"].shape == (3, 3)
     assert dashboard["insights"]
     assert all(
@@ -38,8 +42,34 @@ def test_eda_service_builds_tables_and_figures(sample_market_data) -> None:
     )
     assert isinstance(dashboard["price_figure"], Figure)
     assert isinstance(dashboard["candlestick_figure"], Figure)
+    assert isinstance(dashboard["return_distribution_figure"], Figure)
+    assert isinstance(dashboard["rolling_volatility_figure"], Figure)
     assert dashboard["candlestick_figure"].data[0].name == candle_symbol
     assert isinstance(dashboard["correlation_figure"], Figure)
+
+
+def test_eda_service_degrades_only_correlation_when_dates_do_not_overlap(
+    sample_market_data,
+) -> None:
+    symbols = get_sample_symbols()[:2]
+    selected = sample_market_data[
+        sample_market_data["symbol"].isin(symbols)
+    ].copy()
+    shifted = selected["symbol"] == symbols[1]
+    selected.loc[shifted, "trade_date"] = pd.Series(
+        pd.date_range("2026-01-01", periods=int(shifted.sum()), freq="D"),
+        index=selected.index[shifted],
+    )
+
+    dashboard = build_eda_dashboard(selected)
+
+    assert dashboard["correlation"] is None
+    assert dashboard["correlation_figure"] is None
+    assert dashboard["price_figure"].data
+    assert any(
+        insight["title"] == "相关性样本不足"
+        for insight in dashboard["insights"]
+    )
 
 
 def test_classification_service_runs_role4_and_role3_figure(
@@ -102,3 +132,26 @@ def test_clustering_service_keeps_contract_fixed_k(sample_market_data) -> None:
         "volatility",
         "max_drawdown",
     ]
+
+
+def test_clustering_dashboard_attaches_dynamic_labels_and_scope(
+    sample_market_data,
+) -> None:
+    dashboard = run_stock_clustering_dashboard(
+        sample_market_data, random_state=42
+    )
+    result = dashboard["result"]
+    interpretation = dashboard["interpretation"]
+
+    assert result["k"] == 3
+    assert set(interpretation["cluster_label"]) == {0, 1, 2}
+    assert all(
+        label.startswith("[所选历史区间]")
+        for label in interpretation["cluster_label"].values()
+    )
+    assert interpretation["样本范围"] == {
+        "股票数量": 10,
+        "起始日期": "2024-01-02",
+        "截止日期": "2024-12-31",
+    }
+    assert "不构成任何投资建议" in interpretation["免责声明"]

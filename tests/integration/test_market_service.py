@@ -13,6 +13,7 @@ from src.services.market_service import (
     get_sample_symbols,
     load_market_data,
     load_realtime_quotes,
+    search_stocks,
 )
 from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoDataError
 
@@ -90,6 +91,20 @@ def test_sample_universe_and_bounds_match_documented_snapshot() -> None:
     assert len(set(symbols)) == 10
     assert first_date == date(2024, 1, 2)
     assert last_date == date(2024, 12, 31)
+
+
+def test_stock_search_service_delegates_to_role2_public_api(monkeypatch) -> None:
+    expected = pd.DataFrame(
+        [{"symbol": "600519.SH", "name": "贵州茅台", "market": "SH"}]
+    )
+    monkeypatch.setattr(
+        "src.services.market_service.search_stock_symbols",
+        lambda query, *, limit: expected,
+    )
+
+    result = search_stocks("茅台", limit=8)
+
+    pd.testing.assert_frame_equal(result, expected)
 
 
 def test_market_overview_rejects_reversed_dates() -> None:

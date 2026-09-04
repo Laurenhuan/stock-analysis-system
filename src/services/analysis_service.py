@@ -12,7 +12,9 @@ from src.analysis.eda import (
     correlation_matrix,
     date_range_summary,
     describe_statistics,
+    extreme_returns_summary,
     missing_values_summary,
+    return_distribution_summary,
     returns_comparison,
     risk_return_summary,
 )
@@ -20,9 +22,12 @@ from src.visualization.charts import (
     plot_candlestick,
     plot_correlation_matrix,
     plot_price,
+    plot_return_distribution,
     plot_returns_comparison,
     plot_risk_comparison,
+    plot_rolling_volatility,
 )
+from src.utils.exceptions import InsufficientDataError
 
 
 class EdaDashboard(TypedDict):
@@ -33,13 +38,17 @@ class EdaDashboard(TypedDict):
     missing_values: DataFrame
     returns: DataFrame
     risk_return: DataFrame
-    correlation: DataFrame
+    return_distribution: DataFrame
+    extreme_returns: DataFrame
+    correlation: DataFrame | None
     insights: list[EdaInsight]
     price_figure: Figure
     candlestick_figure: Figure
     returns_figure: Figure
     risk_figure: Figure
-    correlation_figure: Figure
+    return_distribution_figure: Figure
+    rolling_volatility_figure: Figure
+    correlation_figure: Figure | None
 
 
 def get_analysis_status() -> dict[str, str]:
@@ -65,7 +74,10 @@ def build_eda_dashboard(
 ) -> EdaDashboard:
     """Coordinate EDA tables, conclusions and reusable figures for one page."""
     risk = risk_return_summary(data)
-    corr = correlation_matrix(data, method=correlation_method)
+    try:
+        corr = correlation_matrix(data, method=correlation_method)
+    except InsufficientDataError:
+        corr = None
     candle_symbol = candlestick_symbol or str(sorted(data["symbol"].unique())[0])
     return EdaDashboard(
         descriptive_statistics=describe_statistics(data),
@@ -73,6 +85,8 @@ def build_eda_dashboard(
         missing_values=missing_values_summary(data).reset_index(names="field"),
         returns=returns_comparison(data),
         risk_return=risk,
+        return_distribution=return_distribution_summary(data),
+        extreme_returns=extreme_returns_summary(data),
         correlation=corr,
         insights=build_eda_insights(
             data, correlation_method=correlation_method
@@ -89,7 +103,18 @@ def build_eda_dashboard(
         risk_figure=plot_risk_comparison(
             risk, title="波动率与最大回撤对比"
         ),
-        correlation_figure=plot_correlation_matrix(
-            corr, title=f"{correlation_method.title()} 日收益率相关系数"
+        return_distribution_figure=plot_return_distribution(
+            data, title="日收益率分布"
+        ),
+        rolling_volatility_figure=plot_rolling_volatility(
+            data, title="20 日滚动波动率"
+        ),
+        correlation_figure=(
+            plot_correlation_matrix(
+                corr,
+                title=f"{correlation_method.title()} 日收益率相关系数",
+            )
+            if corr is not None
+            else None
         ),
     )
