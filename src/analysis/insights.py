@@ -278,22 +278,33 @@ def _performance_insights(data: DataFrame, rc) -> list[EdaInsight]:
         DISCLAIMER,
     ))
 
-    if len(rc) == 1:
-        row = rc.iloc[0]
-        if pd.isna(row["cumulative_return"]):
-            insights.append(_insight(
-                CATEGORY_PERFORMANCE, "收益数据不足",
-                f"{row['symbol']} 有效收益日不足，无法生成收益概览。",
-                "—",
-                "样本不足的股票不生成收益结论，以免误导。",
-                DISCLAIMER,
-            ))
-            return insights
+    # 排名与概览都以「有效累计收益」的股票数为准：多只股票中只有 1 只有效时，
+    # 不应把同一只股票同时排成最高和最低。
+    valid_rc = rc.dropna(subset=["cumulative_return"])
+    n_valid = len(valid_rc)
+
+    if n_valid == 0:
+        insights.append(_insight(
+            CATEGORY_PERFORMANCE, "收益数据不足",
+            "没有股票具备有效收益数据，无法生成收益概览。",
+            "累计收益为 NaN 的股票不计入有效样本。",
+            "样本不足时不生成收益结论，以免误导。",
+            DISCLAIMER,
+        ))
+        return insights
+
+    if n_valid == 1:
+        row = valid_rc.iloc[0]
+        evidence = (
+            "仅 1 只股票，无横向对比。"
+            if len(rc) == 1
+            else f"{len(rc)} 只股票中仅 {row['symbol']} 具备有效收益，其余股票收益数据不足。"
+        )
         insights.append(_insight(
             CATEGORY_PERFORMANCE, "收益概览",
             f"{row['symbol']} 区间累计收益为 {_pct(row['cumulative_return'])}，"
             f"平均日收益 {_pct(row['mean_return'])}，上涨日占比 {_pct(row['win_rate'])}。",
-            "仅 1 只股票，无横向对比。",
+            evidence,
             "该股票在所选区间的收益表现如上。",
             DISCLAIMER,
         ))
@@ -301,19 +312,19 @@ def _performance_insights(data: DataFrame, rc) -> list[EdaInsight]:
 
     insights.extend(_rank_insight(
         CATEGORY_PERFORMANCE, "累计收益最高", "累计收益最低",
-        rc, "cumulative_return", fmt=_pct, metric_label="区间累计收益",
+        valid_rc, "cumulative_return", fmt=_pct, metric_label="区间累计收益",
         higher_interp="该股票在所选区间相对表现更强。",
         lower_interp="该股票在所选区间相对表现较弱。",
     ))
     insights.extend(_rank_insight(
         CATEGORY_PERFORMANCE, "平均日收益最高", "平均日收益最低",
-        rc, "mean_return", fmt=_pct, metric_label="平均日收益",
+        valid_rc, "mean_return", fmt=_pct, metric_label="平均日收益",
         higher_interp="该股票平均每个交易日的收益相对更高。",
         lower_interp="该股票平均每个交易日的收益相对更低。",
     ))
-    top_wr = _top_by(rc, "win_rate")
+    top_wr = _top_by(valid_rc, "win_rate")
     if top_wr is not None:
-        median = rc["win_rate"].median()
+        median = valid_rc["win_rate"].median()
         insights.append(_insight(
             CATEGORY_PERFORMANCE, "上涨日占比最高",
             f"{top_wr[0]} 上涨日占比最高，为 {_pct(top_wr[1])}。",
@@ -331,63 +342,71 @@ def _risk_insights(rc, rr) -> list[EdaInsight]:
         return []
     insights: list[EdaInsight] = []
 
-    if len(rr) == 1:
-        row = rr.iloc[0]
-        if pd.isna(row["volatility"]):
-            insights.append(_insight(
-                CATEGORY_RISK, "风险数据不足",
-                f"{row['symbol']} 有效收益日不足，无法生成风险概览。",
-                "—",
-                "样本不足的股票不生成风险结论，以免误导。",
-                DISCLAIMER,
-            ))
-            return insights
+    # 排名与概览都以「有效波动率」的股票数为准：多只股票中只有 1 只有效时，
+    # 不应把同一只股票同时排成波动最大和最小。
+    valid_rr = rr.dropna(subset=["volatility"])
+    n_valid = len(valid_rr)
+
+    if n_valid == 0:
+        insights.append(_insight(
+            CATEGORY_RISK, "风险数据不足",
+            "没有股票具备有效波动率数据，无法生成风险概览。",
+            "波动率为 NaN 的股票不计入有效样本。",
+            "样本不足时不生成风险结论，以免误导。",
+            DISCLAIMER,
+        ))
+    elif n_valid == 1:
+        row = valid_rr.iloc[0]
+        evidence = (
+            "仅 1 只股票，无横向对比。"
+            if len(rr) == 1
+            else f"{len(rr)} 只股票中仅 {row['symbol']} 具备有效波动率，其余股票风险数据不足。"
+        )
         insights.append(_insight(
             CATEGORY_RISK, "风险概览",
             f"{row['symbol']} 日收益标准差为 {_pct(row['volatility'])}（未年化），"
             f"最大回撤为 {_pct(row['max_drawdown'])}。",
-            "仅 1 只股票，无横向对比。",
+            evidence,
             "该股票在所选区间的风险水平如上。",
             DISCLAIMER,
         ))
-        return insights
+    else:
+        v_top = _top_by(valid_rr, "volatility")
+        v_bot = _bottom_by(valid_rr, "volatility")
+        if v_top is not None and v_bot is not None:
+            median = valid_rr["volatility"].median()
+            insights.append(_insight(
+                CATEGORY_RISK, "波动最大",
+                f"{v_top[0]} 日收益波动最大，日收益标准差为 {_pct(v_top[1])}（未年化）。",
+                _compare_median(v_top[1], median, higher=True),
+                "该股票在所选区间的日收益波动幅度相对最大。",
+                DISCLAIMER,
+            ))
+            insights.append(_insight(
+                CATEGORY_RISK, "波动最小",
+                f"{v_bot[0]} 日收益波动最小，日收益标准差为 {_pct(v_bot[1])}（未年化）。",
+                _compare_median(v_bot[1], median, higher=False),
+                "该股票在所选区间的日收益波动幅度相对最小。",
+                DISCLAIMER,
+            ))
 
-    v_top = _top_by(rr, "volatility")
-    v_bot = _bottom_by(rr, "volatility")
-    if v_top is not None and v_bot is not None:
-        median = rr["volatility"].median()
-        insights.append(_insight(
-            CATEGORY_RISK, "波动最大",
-            f"{v_top[0]} 日收益波动最大，日收益标准差为 {_pct(v_top[1])}（未年化）。",
-            _compare_median(v_top[1], median, higher=True),
-            "该股票在所选区间的日收益波动幅度相对最大。",
-            DISCLAIMER,
-        ))
-        insights.append(_insight(
-            CATEGORY_RISK, "波动最小",
-            f"{v_bot[0]} 日收益波动最小，日收益标准差为 {_pct(v_bot[1])}（未年化）。",
-            _compare_median(v_bot[1], median, higher=False),
-            "该股票在所选区间的日收益波动幅度相对最小。",
-            DISCLAIMER,
-        ))
-
-    dd_deep = _bottom_by(rr, "max_drawdown")   # 最负 = 最深
-    dd_shallow = _top_by(rr, "max_drawdown")   # 最接近 0 = 最浅
-    if dd_deep is not None and dd_shallow is not None:
-        insights.append(_insight(
-            CATEGORY_RISK, "回撤最深",
-            f"{dd_deep[0]} 最大回撤最深，为 {_pct(dd_deep[1])}。",
-            "回撤为负值，越接近 -100% 表示从历史峰值回落越深。",
-            "该股票在所选区间曾经历相对最深的回撤。",
-            DISCLAIMER,
-        ))
-        insights.append(_insight(
-            CATEGORY_RISK, "回撤最浅",
-            f"{dd_shallow[0]} 最大回撤最浅，为 {_pct(dd_shallow[1])}。",
-            "该股票在所选区间的最大回撤幅度相对最小。",
-            "该股票在所选区间的回撤相对最浅。",
-            DISCLAIMER,
-        ))
+        dd_deep = _bottom_by(valid_rr, "max_drawdown")   # 最负 = 最深
+        dd_shallow = _top_by(valid_rr, "max_drawdown")   # 最接近 0 = 最浅
+        if dd_deep is not None and dd_shallow is not None:
+            insights.append(_insight(
+                CATEGORY_RISK, "回撤最深",
+                f"{dd_deep[0]} 最大回撤最深，为 {_pct(dd_deep[1])}。",
+                "回撤为负值，越接近 -100% 表示从历史峰值回落越深。",
+                "该股票在所选区间曾经历相对最深的回撤。",
+                DISCLAIMER,
+            ))
+            insights.append(_insight(
+                CATEGORY_RISK, "回撤最浅",
+                f"{dd_shallow[0]} 最大回撤最浅，为 {_pct(dd_shallow[1])}。",
+                "该股票在所选区间的最大回撤幅度相对最小。",
+                "该股票在所选区间的回撤相对最浅。",
+                DISCLAIMER,
+            ))
 
     merged = rc[["symbol", "cumulative_return"]].merge(
         rr[["symbol", "volatility", "max_drawdown"]], on="symbol"

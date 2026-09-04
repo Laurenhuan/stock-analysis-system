@@ -170,9 +170,15 @@ def test_plot_candlestick_single_trace_data(ohlc_df):
     assert list(fig.data[0].close) == [110.0, 105.0, 107.0]
 
 
-def test_plot_candlestick_multi_symbol_traces(multi_ohlc_df):
-    fig = plot_candlestick(multi_ohlc_df)
-    assert len(fig.data) == 2  # one candlestick per symbol
+def test_plot_candlestick_rejects_multi_symbol(multi_ohlc_df):
+    # 蜡烛图只允许单只股票：多只股票时直接报错，而不是叠加多条蜡烛。
+    with pytest.raises(DataValidationError):
+        plot_candlestick(multi_ohlc_df)
+
+
+def test_plot_candlestick_rejects_multiple_selected_symbols(multi_ohlc_df):
+    with pytest.raises(DataValidationError):
+        plot_candlestick(multi_ohlc_df, symbols=["600519.SH", "000001.SZ"])
 
 
 def test_plot_candlestick_missing_column(ohlc_df):
@@ -383,8 +389,8 @@ def test_plot_correlation_matrix_1d_input():
 
 # --- theme / immutability ----------------------------------------------------
 
-def test_color_sequence_ten_distinct_colors():
-    assert len(_COLOR_SEQUENCE) >= 10
+def test_color_sequence_twenty_distinct_colors():
+    assert len(_COLOR_SEQUENCE) == 20
     assert len(set(_COLOR_SEQUENCE)) == len(_COLOR_SEQUENCE)
 
 
@@ -398,8 +404,42 @@ def test_chart_functions_do_not_mutate_input(
     plot_price(multi_price_df)
     plot_returns_comparison(returns_df)
     plot_risk_comparison(risk_df)
-    plot_candlestick(multi_ohlc_df)
+    plot_candlestick(multi_ohlc_df, symbols=["600519.SH"])
     pd.testing.assert_frame_equal(multi_price_df, price_before)
     pd.testing.assert_frame_equal(returns_df, returns_before)
     pd.testing.assert_frame_equal(risk_df, risk_before)
     pd.testing.assert_frame_equal(multi_ohlc_df, ohlc_before)
+
+
+# --- 15 / 20 stock comparison scale ------------------------------------------
+
+def test_plot_price_twenty_symbols_traces():
+    symbols = [f"STK{i:02d}" for i in range(20)]
+    rows = [
+        {
+            "trade_date": pd.Timestamp("2021-06-01") + pd.Timedelta(days=d),
+            "symbol": s,
+            "close": 100.0 + i + d,
+        }
+        for i, s in enumerate(symbols)
+        for d in range(3)
+    ]
+    fig = plot_price(pd.DataFrame(rows))
+    assert len(fig.data) == 20
+    assert [t.name for t in fig.data] == symbols
+
+
+def test_plot_returns_comparison_fifteen_symbols_traces():
+    symbols = [f"STK{i:02d}" for i in range(15)]
+    rows = [
+        {
+            "trade_date": pd.Timestamp("2020-01-06") + pd.Timedelta(days=d),
+            "symbol": s,
+            "cumulative_return": 0.01 * i + 0.002 * d,
+        }
+        for i, s in enumerate(symbols)
+        for d in range(4)
+    ]
+    fig = plot_returns_comparison(pd.DataFrame(rows))
+    assert len(fig.data) == 15
+    assert [t.name for t in fig.data] == symbols
