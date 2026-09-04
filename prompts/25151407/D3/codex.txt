@@ -1,10 +1,5 @@
-证券金融数据分析与可视化系统
-D3 Codex 关键用户提示词记录
-日期：2026-09-03
-工具：Codex
-使用者：Laurenhuan（Role 1，学号 25151407）
-
-说明：以下内容摘自本人当天与 Codex 的真实对话，只保留本人发送的关键 user prompt；不包含 AI 回答、系统消息、自动上下文、密码、Token 或 Cookie。
+D3 Codex 关键用户提示词｜2026-09-03｜Laurenhuan（25151407）
+说明：来自本人真实 user prompt；已删除终端命令/输出、复制的整改全文和重复内容。
 
 [Prompt 01]
 role4的任务出了问题，怎么解决？关闭让他重新提交还是我们这边直接更改？千万不能改我们的那些正确的提示词和daily
@@ -31,81 +26,22 @@ role4的任务出了问题，怎么解决？关闭让他重新提交还是我们
 这是role3新提交的pr，检查一下是否符合我们之前的标准，然后有必要的话审核下修改的文件
 
 [Prompt 09]
-修复内容
-改用官方 stock_zh_a_hist_tx：删除了腾讯私有 newfqkline 直连（_TENCENT_URL/requests.get/_convert_tencent 行解析），改为 ak.stock_zh_a_hist_tx(symbol=tx_symbol, start_date=..., end_date=..., adjust="qfq", timeout=...)。官方函数已把 volume 统一为股、amount 统一为元，只做列名映射。
-688 科创板单位：官方函数对 sh688 不 ×100（volume 本就是股），_convert_tencent 不再统一 ×100，只对深市主板补正。
-多股票部分成功 + 跨 Provider 合并：_fetch_akshare / fetch_realtime_quotes 改为「核对实际返回集合 → 只对缺失股票调用备用 Provider → 合并 → 缺失代码明确报 NoDataError」，绝不再把部分结果当全部成功。跨源合并时 provenance 记为 akshare_mixed / eastmoney+tencent。
-收窄异常：_retry 与回退循环只捕获 (ConnectionError, TimeoutError, OSError)，字段映射/JSON 结构/程序错误（KeyError、TypeError 等）直接上抛。
-补充 8 项测试（新增 14 个用例）：688 单位、day/qfqday、多源合并与缺失报告、跨年去重与日期过滤、无起始日期的有界默认起点、腾讯经 clean_market_data 不二次换算、实时部分缺失、pct_change 单位（百分比，非小数）。
-
-role2之前整改了一个，你看看这个是否符合要求，改正确了吗
-
-[Prompt 10]
-改了什么
-src/analysis/insights.py 的 _risk_insights：
-
-merged 合并 cumulative_return 与 volatility 后，先 dropna(subset=["cumulative_return", "volatility"])，把 NaN 股票剔除，避免 nan% 混进结论。
-有效样本为空 → 输出「收益与风险样本不足」并提前返回，不再生成「高收益伴随高波动」。
-只有有效股票数 >= 3 时才计算 Spearman；文案从「在所选的 N 只」改为「在 N 只有效股票中」。
-补的回归测试
-tests/unit/test_insights.py 新增两条：
-
-test_all_nan_returns_no_nan_percent — 多股 return 全 NaN 时，输出不含 nan%，且出现「收益与风险样本不足」。
-test_three_stocks_two_valid_no_spearman — 3 只股票仅 2 只有效时，不生成「收益与风险关系」。
-测试结果
-Role 3 单测：91 → 93 passed（test_insights + test_eda + test_charts）
-全仓：240 → 242 passed
-git diff --check 干净（无空白/冲突残留）
-推送状态
-已提交并推送到 gitee feat/eda-visualization：e3fedf0..8695f54，未新开 PR、未强推。分支仍相对 gitee/main 落后 0 个提交。
-
-你可以在原 PR 里把测试数字更新为：Role 3 单测 93 passed，全仓 242 passed。
-
-这是role3的更改，有没有达到我们的要求？是否正确？
-
-[Prompt 11]
 这种工作是否能够我来做，好像并不是非常严重。我合并了之后再我来进行更改是否可行。或者我更改了之后再merge呢，这样还是算在role3上吗
 
-[Prompt 12]
+[Prompt 10]
 好的。那我们开始先修改，你帮我改好然后commit上去，我来pr
 
-[Prompt 13]
-Microsoft Windows [版本 10.0.26200.9168]
-(c) Microsoft Corporation。保留所有权利。
-
-C:\Users\LENOVO>cd D:\Codex工作空间\stock-analysis-system-role-boundaries
-
-C:\Users\LENOVO>git push origin feat/eda-visualization
-fatal: not a git repository (or any of the parent directories): .git
-
-C:\Users\LENOVO>失败了好像？
-
-[Prompt 14]
+[Prompt 11]
 所以我现在重新mergerole3的pr就对了是吗
 
-[Prompt 15]
+[Prompt 12]
 现在检查我们的todos，所有的代码都已经上传，然后role2的我还没有merge，你看看适不适合merge，如果不行我们先更改了再merge。然后检查我们的todos里面的任务有没有完成，没有完成先向我汇报哪里没有完成，还有关于todos的内容，到底符不符合我们的项目要求。你先检查一遍，审核一下role2的最新的代码pr和todos有没有符合老师的要求
 
-[Prompt 16]
-好的，关于role2的部分你来实现你想要的结果。然后role2现在又提交了关于他的今日的daily和prompts的pr，这个不用审核是正确的我们直接merge。然后是我们的todos，你按照我们现在的实际进度和情况进行一下更新。关于我我们目录下的旧文件prompts/D1/README.md
-prompts/D1/juanjuan-he-claude.txt，直接删除就好。关于我的提示词和daily，一会再生成和提交，因为我有一些改动需要和你讨论。期末报告就像他的名字一样，是期末报告期末再写现在不写。我今天的role1的任务就按照你说的role1集成分支来接入，然后我们和role2的一起merge了，这一轮完成删那两个文件和我们这个项目的我的剩余部分修改（role1和todos这类），并且我来merge，然后下一轮来完成我的prompts和daily。其实就是按照你说的顺序开始做。我把所有都弄到main上之后再进行我自己的daily和prompts的提交。
-
-[Prompt 17]
+[Prompt 14]
 不用跑了，直接给我详细步骤让我merge，我现在需要做我的daily和prompts，马上就要到截止时间来不及了。
 
-[Prompt 18]
+[Prompt 15]
 已全部合并并同步 main
 
-[Prompt 19]
+[Prompt 16]
 现在已经做完了你所有的事情。
-
-[Prompt 20]
-我看了，我们现在数据调取也就是role2做的非常好。但是我们目前全部的方向都是选取那几只股票，既然有api，为什么我们不能让用户自己输入自己想要查看的股票，然后通过api调取相关的信息呢，我们目前的不也是akshare调取的吗。这个方案可行吗？如果可行，弄成明天的role2的目标之一。
-然后这个我们的整个项目的界面可以开始优化了，现在的想法是，我们首先是一个主界面，介绍我们这个项目。然后再主界面可以有交互的按钮，大概可以分为两类。根据我们选择股票的数量也就是分析对象来分的，举个例子你就懂了，比如说我们的数据概览，是只需要选择一只股票代码，然后就选择日期就可以通过api加载行情，但是另外三个版面，eda和监督学习股票聚类，都是使用了多只股票，对比的手段（是这样的对吗）。从用户的角度分析，数据概览只需要选择一只股票。然后如果用户选择多只股票的时候，可以再在在这之下，分为eda分析和监督学习和股票聚类的页面，这样用户在看这三类的时候不用重复选择了，希望你能理解我的意思。或者你觉得是否有更好的设计方式。然后关于这个streamlit的前端设计，你可以看看github或者是gitee上有没有什么sikll，我们学习他们的设计。https://github.com/streamlit/agent-skills.git
-这个是我们找来的一个链接，你看看里面是否有可以采用的界面方案。
-
-然后我发现EDA分析这块，也是不能够使用我们当下最新的数据的，也不是实时数据，我们EDA不是采用api调用数据分析的吗，我们可以改成这样吗，按理说后面几个都能够采用到最新的数据才行的。
-
-同样的监督学习部分，页面上上部分的时间是对的，但是下部分的时间只有24年的，就没有对齐，我们这个也能像前面一样采用用户输入的时间吗，或者说只能这部分时间，我没有很了解监督学习所以我不知道，然后只有45只股票这里，这个数据合理吗，别的监督学习这部分是不是也采用这么多数据，还是说是用户可以选择的？我们需要借鉴正常项目的方案。（但是我看监督学习好像也是只是选择一只股票，按理来说和股票聚类和EDA就不是一个类别了，是这样吗，前面的streamlit设计又有待参考了。你得帮我想一个正常的用户界面。）
-
-股票聚类部分，这个聚类就是分类的意思，虽然分出来了，但是并不知道这个是什么类，希望可以详细标明一下，然后是还是十只，这个数字，如果可以的话，希望可以用户自己进行选择，而不是弄死在这里。还有k也是。好了这是我们目前的一些问题，我们希望明天能够解决，你把这些分好类添加进todos里面（之前的任务没有冲突的还是要进行），然后给我一个详细的明天roles们要做的任务，我发布下去，给他们的agent，同时，这条你需要更改我的今天day3的文件和我的prompts文件。做好了这些之后再教我一步一步同步到main上。
