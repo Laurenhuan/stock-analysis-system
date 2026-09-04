@@ -224,3 +224,49 @@ class TestErrors:
         df = _make_df(n=15)
         with pytest.raises(InsufficientDataError):
             run_classification(df)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic single-stock input (D4 task)
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicSingleStockInput:
+    """Tests for arbitrary-length data and edge cases."""
+
+    def test_two_stocks_produce_independent_results(self) -> None:
+        """Different stock codes should produce different results."""
+        df1 = _make_df(n=200, seed=42)
+        df2 = _make_df(n=200, seed=123)
+        r1 = run_classification(df1)
+        r2 = run_classification(df2)
+        # Accuracy and predictions should differ (different data)
+        assert r1["metrics"]["accuracy"] != r2["metrics"]["accuracy"]
+
+    def test_single_class_in_training_raises(self) -> None:
+        """If training set has only one class, InsufficientDataError is raised."""
+        # Create data where ALL prices are monotonically increasing.
+        # This means every return > 0, every label = 1.
+        # After feature eng, training set has only class 1 → error.
+        n = 200
+        dates = pd.bdate_range("2024-01-01", periods=n)
+        price = 100 + np.arange(n) * 0.5  # strictly increasing
+        volume = np.full(n, 1000.0)
+        df = pd.DataFrame({"trade_date": dates, "close": price, "volume": volume})
+        with pytest.raises(InsufficientDataError, match="only one class"):
+            run_classification(df)
+
+    def test_arbitrary_date_range_works(self) -> None:
+        """Classification works with any date range passed by the caller."""
+        df = _make_df(n=300)
+        # Slice to a subset — model should still work
+        subset = df.iloc[50:250].reset_index(drop=True)
+        result = run_classification(subset)
+        assert len(result["predictions"]) > 0
+        assert 0.0 <= result["metrics"]["accuracy"] <= 1.0
+
+    def test_minimum_viable_dataset(self) -> None:
+        """A dataset just above _MIN_SAMPLES should still produce results."""
+        df = _make_df(n=55)  # After feature eng ~35 samples (> 30)
+        result = run_classification(df)
+        assert len(result["predictions"]) > 0

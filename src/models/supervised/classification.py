@@ -131,7 +131,8 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
     df : pd.DataFrame
         Raw market data for a **single** stock.  Must contain at least
         ``trade_date``, ``close``, ``volume``.  Rows must be sorted by
-        ``trade_date`` ascending.
+        ``trade_date`` ascending.  Date filtering is handled by the caller
+        (Role 1 Service); this function processes whatever rows it receives.
 
     Returns
     -------
@@ -145,7 +146,8 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         non-finite values are found in close/volume.
     InsufficientDataError
         If not enough samples remain after feature engineering, or
-        if train/test set is empty after the split.
+        if train/test set is empty after the split, or if only one
+        class exists in the training set.
     """
     # --- validate input ---
     _validate_input(df)
@@ -173,6 +175,12 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
 
     if len(X_test) == 0:
         raise InsufficientDataError("Test set is empty after split")
+
+    # --- edge case: single class in training set ---
+    if y_train.nunique() < 2:
+        raise InsufficientDataError(
+            "Training set has only one class; need both up and down samples"
+        )
 
     # --- train ---
     model = DecisionTreeClassifier(
