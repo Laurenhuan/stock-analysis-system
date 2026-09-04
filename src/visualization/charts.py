@@ -217,6 +217,59 @@ def plot_risk_comparison(
     return _apply_theme(fig)
 
 
+def plot_return_distribution(
+    df: DataFrame,
+    *,
+    symbols: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """Box plot of daily returns, one box per symbol.
+
+    Each box shows the median, quartiles and outlying tail days of a stock's
+    daily ``return`` — the standard EDA view of return-distribution shape.
+    ``symbols`` restricts which symbols are drawn; by default every symbol is
+    drawn.
+    """
+    _check_input(df, ("symbol", "return"), label="plot_return_distribution")
+    if symbols is not None:
+        df = _filter_symbols(df, symbols, label="plot_return_distribution")
+    fig = go.Figure()
+    for symbol, group in df.groupby("symbol"):
+        fig.add_trace(go.Box(y=group["return"], name=str(symbol)))
+    fig.update_layout(title=title, xaxis_title="股票", yaxis_title="日收益率")
+    return _apply_theme(fig)
+
+
+def plot_rolling_volatility(
+    df: DataFrame,
+    *,
+    symbols: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """Line chart of the rolling 20-day volatility over time, per symbol.
+
+    Expects Role 2's ``volatility_20d`` field (rolling sample std of daily
+    returns, ddof=1, not annualized). Leading NaNs before the window matures are
+    left as gaps, not filled. ``symbols`` restricts which symbols are drawn.
+    """
+    _check_input(
+        df, ("trade_date", "symbol", "volatility_20d"),
+        label="plot_rolling_volatility",
+    )
+    if symbols is not None:
+        df = _filter_symbols(df, symbols, label="plot_rolling_volatility")
+    fig = go.Figure()
+    for symbol, group in df.groupby("symbol"):
+        fig.add_trace(
+            go.Scatter(
+                x=group["trade_date"], y=group["volatility_20d"],
+                mode="lines", name=str(symbol),
+            )
+        )
+    fig.update_layout(title=title, xaxis_title="交易日期", yaxis_title="20 日波动率")
+    return _apply_theme(fig)
+
+
 def plot_correlation_matrix(
     corr, *, title: str | None = None, decimals: int = 2
 ) -> Figure:
