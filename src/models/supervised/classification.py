@@ -123,7 +123,11 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def run_classification(df: pd.DataFrame) -> ClassificationResult:
+def run_classification(
+    df: pd.DataFrame,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> ClassificationResult:
     """Train a DecisionTreeClassifier and evaluate on a time-ordered test set.
 
     Parameters
@@ -132,11 +136,17 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         Raw market data for a **single** stock.  Must contain at least
         ``trade_date``, ``close``, ``volume``.  Rows must be sorted by
         ``trade_date`` ascending.
+    start_date : str, optional
+        Inclusive start date for filtering (format: 'YYYY-MM-DD').
+    end_date : str, optional
+        Inclusive end date for filtering (format: 'YYYY-MM-DD').
 
     Returns
     -------
     ClassificationResult
-        Dict with keys model, feature_names, metrics, predictions.
+        Dict with keys model, feature_names, metrics, predictions,
+        and sample metadata (n_raw_trading_days, n_effective_samples,
+        n_train_samples, n_test_samples, feature_importance).
 
     Raises
     ------
@@ -145,18 +155,32 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         non-finite values are found in close/volume.
     InsufficientDataError
         If not enough samples remain after feature engineering, or
-        if train/test set is empty after the split.
+        if train/test set is empty after the split, or if only one
+        class exists in the training set.
     """
     # --- validate input ---
     _validate_input(df)
 
-    # --- feature engineering ---
-    data = _build_features(df)
+    # --- date range filtering ---
+    data = df.copy()
+    if start_date is not None:
+        data = data[data["trade_date"] >= start_date]
+    if end_date is not None:
+        data = data[data["trade_date"] <= end_date]
+    data = data.reset_index(drop=True)
 
-    if len(data) < _MIN_SAMPLES:
+    # Record raw trading days (after date filtering, before feature eng)
+    n_raw_trading_days = len(data)
+
+    # --- feature engineering ---
+    data = _build_features(data)
+
+    n_effective_samples = len(data)
+
+    if n_effective_samples < _MIN_SAMPLES:
         raise InsufficientDataError(
             f"Need at least {_MIN_SAMPLES} samples after feature engineering, "
-            f"got {len(data)}"
+            f"got {n_effective_samples}"
         )
 
     # --- time-ordered 80/20 split (Contract v0.2: fixed ratio) ---
@@ -173,6 +197,12 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
 
     if len(X_test) == 0:
         raise InsufficientDataError("Test set is empty after split")
+
+    # --- edge case: single class in training set ---
+    if y_train.nunique() < 2:
+        raise InsufficientDataError(
+            "Training set has only one class; need both up and down samples"
+        )
 
     # --- train ---
     model = DecisionTreeClassifier(
@@ -204,9 +234,19 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
     )
     predictions = predictions[list(CLASSIFICATION_PREDICTION_COLUMNS)]
 
+    # --- sample metadata ---
+    n_train_samples = len(X_train)
+    n_test_samples = len(X_test)
+    feature_importance = model.feature_importances_.tolist()
+
     return {
         "model": model,
         "feature_names": FEATURE_NAMES,
         "metrics": metrics,
         "predictions": predictions,
+        "n_raw_trading_days": n_raw_trading_days,
+        "n_effective_samples": n_effective_samples,
+        "n_train_samples": n_train_samples,
+        "n_test_samples": n_test_samples,
+        "feature_importance": feature_importance,
     }

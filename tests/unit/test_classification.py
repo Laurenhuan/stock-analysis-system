@@ -36,12 +36,13 @@ class TestRunClassificationNormal:
     def test_returns_expected_keys(self) -> None:
         df = _make_df()
         result = run_classification(df)
-        assert set(result.keys()) == {
-            "model",
-            "feature_names",
-            "metrics",
-            "predictions",
+        expected_core = {"model", "feature_names", "metrics", "predictions"}
+        expected_meta = {
+            "n_raw_trading_days", "n_effective_samples",
+            "n_train_samples", "n_test_samples", "feature_importance",
         }
+        assert expected_core.issubset(set(result.keys()))
+        assert expected_meta.issubset(set(result.keys()))
 
     def test_model_is_fitted_decision_tree(self) -> None:
         df = _make_df()
@@ -224,3 +225,108 @@ class TestErrors:
         df = _make_df(n=15)
         with pytest.raises(InsufficientDataError):
             run_classification(df)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic single-stock input (D4 task)
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicSingleStockInput:
+    """Tests for dynamic date range and sample metadata."""
+
+    def test_output_includes_sample_metadata(self) -> None:
+        """Result should contain n_raw_trading_days, n_effective_samples, etc."""
+        df = _make_df(n=200)
+        result = run_classification(df)
+        assert "n_raw_trading_days" in result
+        assert "n_effective_samples" in result
+        assert "n_train_samples" in result
+        assert "n_test_samples" in result
+        assert "feature_importance" in result
+
+    def test_sample_metadata_values_are_positive(self) -> None:
+        """All sample counts should be positive integers."""
+        df = _make_df(n=200)
+        result = run_classification(df)
+        assert result["n_raw_trading_days"] > 0
+        assert result["n_effective_samples"] > 0
+        assert result["n_train_samples"] > 0
+        assert result["n_test_samples"] > 0
+
+    def test_train_plus_test_equals_effective(self) -> None:
+        """n_train_samples + n_test_samples == n_effective_samples."""
+        df = _make_df(n=200)
+        result = run_classification(df)
+        assert (
+            result["n_train_samples"] + result["n_test_samples"]
+            == result["n_effective_samples"]
+        )
+
+    def test_feature_importance_matches_feature_names(self) -> None:
+        """feature_importance should be a list of floats, same length as feature_names."""
+        df = _make_df(n=200)
+        result = run_classification(df)
+        fi = result["feature_importance"]
+        assert isinstance(fi, list)
+        assert len(fi) == len(FEATURE_NAMES)
+        assert all(isinstance(v, float) for v in fi)
+        # Sum of importances should be ~1.0
+        assert abs(sum(fi) - 1.0) < 1e-6
+
+    def test_two_stocks_produce_independent_results(self) -> None:
+        """Different stock codes should produce different results."""
+        df1 = _make_df(n=200, seed=42)
+        df2 = _make_df(n=200, seed=123)
+        r1 = run_classification(df1)
+        r2 = run_classification(df2)
+        # Accuracy and predictions should differ (different data)
+        assert r1["metrics"]["accuracy"] != r2["metrics"]["accuracy"]
+
+    def test_date_range_filtering(self) -> None:
+        """start_date and end_date should filter the input data."""
+        df = _make_df(n=300)
+        # Full range
+        r_full = run_classification(df)
+        # Filtered range (first 200 days)
+        r_filtered = run_classification(
+            df, start_date="2024-01-01", end_date="2024-10-10"
+        )
+        # Filtered should have fewer raw trading days
+        assert r_filtered["n_raw_trading_days"] < r_full["n_raw_trading_days"]
+
+    def test_start_date_only(self) -> None:
+        """Only start_date should filter from that date onwards."""
+        df = _make_df(n=300)
+        r = run_classification(df, start_date="2024-06-01")
+        assert r["n_raw_trading_days"] < 300
+
+    def test_end_date_only(self) -> None:
+        """Only end_date should filter up to that date."""
+        df = _make_df(n=300)
+        r = run_classification(df, end_date="2024-06-01")
+        assert r["n_raw_trading_days"] < 300
+
+    def test_single_class_in_training_raises(self) -> None:
+        """If training set has only one class, InsufficientDataError is raised."""
+        # Create data where ALL prices are monotonically increasing.
+        # This means every return > 0, every label = 1.
+        # After feature eng, training set has only class 1 → error.
+        n = 200
+        dates = pd.bdate_range("2024-01-01", periods=n)
+        price = 100 + np.arange(n) * 0.5  # strictly increasing
+        volume = np.full(n, 1000.0)
+        df = pd.DataFrame({"trade_date": dates, "close": price, "volume": volume})
+        with pytest.raises(InsufficientDataError, match="only one class"):
+            run_classification(df)
+
+    def test_reproducibility_with_metadata(self) -> None:
+        """Same input should produce same metadata."""
+        df = _make_df(n=200)
+        r1 = run_classification(df)
+        r2 = run_classification(df)
+        assert r1["n_raw_trading_days"] == r2["n_raw_trading_days"]
+        assert r1["n_effective_samples"] == r2["n_effective_samples"]
+        assert r1["n_train_samples"] == r2["n_train_samples"]
+        assert r1["n_test_samples"] == r2["n_test_samples"]
+        assert r1["feature_importance"] == r2["feature_importance"]
