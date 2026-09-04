@@ -17,8 +17,10 @@ from src.visualization.charts import (
     plot_confusion_matrix,
     plot_correlation_matrix,
     plot_price,
+    plot_return_distribution,
     plot_returns_comparison,
     plot_risk_comparison,
+    plot_rolling_volatility,
 )
 
 
@@ -443,3 +445,72 @@ def test_plot_returns_comparison_fifteen_symbols_traces():
     fig = plot_returns_comparison(pd.DataFrame(rows))
     assert len(fig.data) == 15
     assert [t.name for t in fig.data] == symbols
+
+
+# --- plot_return_distribution ------------------------------------------------
+
+def test_plot_return_distribution_figure_and_traces():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"] * 2),
+        "symbol": ["A", "A", "B", "B"],
+        "return": [0.01, -0.01, 0.02, 0.03],
+    })
+    fig = plot_return_distribution(df)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2  # 每股一个箱线
+    assert {t.name for t in fig.data} == {"A", "B"}
+
+
+def test_plot_return_distribution_symbols_selection():
+    df = pd.DataFrame({"symbol": ["A", "B"], "return": [0.01, 0.02]})
+    fig = plot_return_distribution(df, symbols=["B"])
+    assert len(fig.data) == 1
+    assert fig.data[0].name == "B"
+
+
+def test_plot_return_distribution_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_return_distribution(pd.DataFrame({"symbol": ["A"], "close": [1.0]}))
+
+
+# --- plot_rolling_volatility -------------------------------------------------
+
+def test_plot_rolling_volatility_figure_and_traces():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"] * 2),
+        "symbol": ["A", "A", "B", "B"],
+        "volatility_20d": [np.nan, 0.08, np.nan, 0.12],
+    })
+    fig = plot_rolling_volatility(df)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2
+
+
+def test_plot_rolling_volatility_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_rolling_volatility(pd.DataFrame({
+            "symbol": ["A"], "trade_date": [pd.Timestamp("2024-01-02")],
+        }))
+
+
+def test_plot_rolling_volatility_symbols_selection():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "symbol": ["A", "A"],
+        "volatility_20d": [np.nan, 0.08],
+    })
+    fig = plot_rolling_volatility(df, symbols=["A"])
+    assert len(fig.data) == 1
+
+
+def test_new_chart_functions_do_not_mutate_input():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "symbol": ["A", "A"],
+        "return": [0.01, -0.01],
+        "volatility_20d": [np.nan, 0.08],
+    })
+    before = df.copy(deep=True)
+    plot_return_distribution(df)
+    plot_rolling_volatility(df)
+    pd.testing.assert_frame_equal(df, before)

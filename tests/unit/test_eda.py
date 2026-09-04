@@ -12,7 +12,9 @@ from src.analysis.eda import (
     correlation_matrix,
     date_range_summary,
     describe_statistics,
+    extreme_returns_summary,
     missing_values_summary,
+    return_distribution_summary,
     returns_comparison,
     risk_return_summary,
 )
@@ -328,3 +330,78 @@ def test_correlation_matrix_no_common_trading_days():
     ]
     with pytest.raises(InsufficientDataError):
         correlation_matrix(pd.DataFrame(rows))
+
+
+# --- return_distribution_summary ---------------------------------------------
+
+def test_return_distribution_summary_columns_and_n(multi_df):
+    result = return_distribution_summary(multi_df)
+    assert list(result.columns) == ["symbol", "skewness", "kurtosis", "n"]
+    a = result.set_index("symbol").loc["600519.SH"]
+    # 首日 return 为 NaN，剩余 4 天有效。
+    assert a["n"] == 4
+    assert np.isfinite(a["skewness"])
+    assert np.isfinite(a["kurtosis"])
+
+
+def test_return_distribution_summary_insufficient_nan():
+    # 2 个有效收益日：偏度（需 3）与峰度（需 4）均无法计算。
+    rows = [
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-01"), "return": np.nan},
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-02"), "return": 0.01},
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-03"), "return": -0.01},
+    ]
+    row = return_distribution_summary(pd.DataFrame(rows)).iloc[0]
+    assert row["n"] == 2
+    assert np.isnan(row["skewness"])
+    assert np.isnan(row["kurtosis"])
+
+
+def test_return_distribution_summary_positive_kurtosis_for_outlier():
+    # 收益分布含一个极端正收益 → 超额峰度应为正（厚尾）。
+    closes = [100.0, 101.0, 100.5, 102.0, 101.0, 200.0]
+    rows = [
+        {
+            "symbol": "A",
+            "trade_date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i),
+            "return": c / closes[i - 1] - 1 if i > 0 else np.nan,
+        }
+        for i, c in enumerate(closes)
+    ]
+    result = return_distribution_summary(pd.DataFrame(rows))
+    assert result.iloc[0]["kurtosis"] > 0
+
+
+def test_return_distribution_summary_missing_column(multi_df):
+    with pytest.raises(DataValidationError):
+        return_distribution_summary(multi_df.drop(columns=["return"]))
+
+
+# --- extreme_returns_summary -------------------------------------------------
+
+def test_extreme_returns_summary_dates_and_values(multi_df):
+    result = extreme_returns_summary(multi_df)
+    assert list(result.columns) == [
+        "symbol", "max_return", "max_return_date", "min_return", "min_return_date",
+    ]
+    a = result.set_index("symbol").loc["600519.SH"]
+    # 收益序列 0.10 / -0.04545 / 0.142857 / -0.04167。
+    assert a["max_return"] == pytest.approx(120 / 105 - 1)
+    assert a["min_return"] == pytest.approx(105 / 110 - 1)
+    assert a["max_return_date"] == pd.Timestamp("2024-01-04")
+    assert a["min_return_date"] == pd.Timestamp("2024-01-03")
+
+
+def test_extreme_returns_summary_all_nan_symbol():
+    rows = [
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-02"), "return": 0.01},
+        {"symbol": "A", "trade_date": pd.Timestamp("2024-01-03"), "return": -0.02},
+        {"symbol": "B", "trade_date": pd.Timestamp("2024-01-02"), "return": np.nan},
+    ]
+    b = extreme_returns_summary(pd.DataFrame(rows)).set_index("symbol").loc["B"]
+    assert np.isnan(b["max_return"]) and np.isnan(b["min_return"])
+
+
+def test_extreme_returns_summary_missing_column(multi_df):
+    with pytest.raises(DataValidationError):
+        extreme_returns_summary(multi_df.drop(columns=["trade_date"]))

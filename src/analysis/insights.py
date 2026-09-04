@@ -25,6 +25,8 @@ from pandas import DataFrame
 from src.analysis.eda import (
     correlation_matrix,
     date_range_summary,
+    extreme_returns_summary,
+    return_distribution_summary,
     returns_comparison,
     risk_return_summary,
 )
@@ -36,6 +38,7 @@ CATEGORY_RISK = "risk"
 CATEGORY_TREND = "trend"
 CATEGORY_CORRELATION = "correlation"
 CATEGORY_DATA_QUALITY = "data_quality"
+CATEGORY_DISTRIBUTION = "distribution"
 
 # Mandatory caveat stamped on every group of conclusions.
 DISCLAIMER = "仅描述所选历史区间，不代表未来表现，不构成投资建议。"
@@ -168,11 +171,16 @@ def build_eda_insights(
 
     rc = returns_comparison(data) if has_return else None
     rr = risk_return_summary(data) if (has_return and has_drawdown) else None
+    dist = return_distribution_summary(data) if has_return else None
+    ext = extreme_returns_summary(data) if has_return else None
 
     insights: list[EdaInsight] = []
     insights.extend(_data_quality_insights(data, rc))
     insights.extend(_performance_insights(data, rc))
     insights.extend(_risk_insights(rc, rr))
+    insights.extend(_distribution_insights(dist))
+    insights.extend(_extreme_insights(ext))
+    insights.extend(_volatility_regime_insights(data))
     insights.extend(_correlation_insights(data, correlation_method))
     insights.extend(_trend_insights(data, rc))
     return insights
@@ -459,6 +467,185 @@ def _risk_insights(rc, rr) -> list[EdaInsight]:
                 f"仅 {len(merged)} 只有效股票，样本较少，此关系仅供参考；{DISCLAIMER}",
             ))
     return insights
+
+
+# --- distribution ------------------------------------------------------------
+
+def _skew_label(skew: float) -> str:
+    if skew > 0.5:
+        return "明显右偏（极端正收益相对更多）"
+    if skew < -0.5:
+        return "明显左偏（极端负收益相对更多）"
+    return "接近对称"
+
+
+def _kurt_label(kurt: float) -> str:
+    if kurt > 1.0:
+        return "明显厚尾（相比正态分布有更多极端涨跌）"
+    if kurt < -1.0:
+        return "轻尾（极端值比正态分布更少）"
+    return "峰度接近正态"
+
+
+def _distribution_insights(dist) -> list[EdaInsight]:
+    if dist is None:
+        return []
+    valid = dist.dropna(subset=["skewness", "kurtosis"]).reset_index(drop=True)
+    n_valid = len(valid)
+    if n_valid == 0:
+        return [_insight(
+            CATEGORY_DISTRIBUTION, "分布数据不足",
+            "没有股票具备足够的有效收益日来计算偏度与峰度。",
+            "偏度需至少 3 个、峰度需至少 4 个有效收益日。",
+            "样本不足时不生成收益分布形态结论，以免误导。",
+            DISCLAIMER,
+        )]
+    if n_valid == 1:
+        row = valid.iloc[0]
+        return [_insight(
+            CATEGORY_DISTRIBUTION, "收益分布形态",
+            f"{row['symbol']} 日收益偏度 {row['skewness']:.2f}、超额峰度 "
+            f"{row['kurtosis']:.2f}（基于 {int(row['n'])} 个有效交易日）。",
+            f"偏度：{_skew_label(row['skewness'])}；超额峰度："
+            f"{_kurt_label(row['kurtosis'])}（正态为 0）。",
+            "以上描述该股票在所选区间的日收益分布形状。",
+            DISCLAIMER,
+        )]
+    fat = valid.loc[valid["kurtosis"].idxmax()]
+    skew_row = valid.loc[valid["skewness"].abs().idxmax()]
+    return [
+        _insight(
+            CATEGORY_DISTRIBUTION, "超额峰度最高",
+            f"{fat['symbol']} 日收益超额峰度最高，为 {fat['kurtosis']:.2f}"
+            f"（基于 {int(fat['n'])} 个有效交易日），{_kurt_label(fat['kurtosis'])}。",
+            "超额峰度以正态分布的 0 为基准：正值表示厚尾、负值表示轻尾、接近 0 表示接近正态。",
+            "该股票在所选区间的收益分布尾部特征相对最突出。",
+            DISCLAIMER,
+        ),
+        _insight(
+            CATEGORY_DISTRIBUTION, "偏度最明显",
+            f"{skew_row['symbol']} 日收益偏度为 {skew_row['skewness']:.2f}"
+            f"（基于 {int(skew_row['n'])} 个有效交易日），"
+            f"{_skew_label(skew_row['skewness'])}。",
+            "偏度为正表示右偏、为负表示左偏，绝对值越大偏离对称越明显。",
+            "该股票在所选区间的收益分布偏离对称最明显。",
+            DISCLAIMER,
+        ),
+    ]
+
+
+# --- extreme moves -----------------------------------------------------------
+
+def _min_return_interpretation(value: float) -> str:
+    if value < 0:
+        return "该日同时是所选区间内的最大单日跌幅。"
+    return "所选区间内所有有效日收益均为非负，不存在单日下跌日。"
+
+
+def _extreme_insights(ext) -> list[EdaInsight]:
+    if ext is None:
+        return []
+    valid = ext.dropna(subset=["max_return", "min_return"]).reset_index(drop=True)
+    if valid.empty:
+        return [_insight(
+            CATEGORY_RISK, "极端涨跌数据不足",
+            "没有可用的日收益数据，无法识别区间内的极端单日涨跌。",
+            "全部股票的日收益均为 NaN。",
+            "样本不足时不生成极端涨跌结论，以免误导。",
+            DISCLAIMER,
+        )]
+    i_up = valid["max_return"].idxmax()
+    i_down = valid["min_return"].idxmin()
+    up = valid.loc[i_up]
+    down = valid.loc[i_down]
+    up_day = pd.Timestamp(up["max_return_date"]).date()
+    down_day = pd.Timestamp(down["min_return_date"]).date()
+    return [
+        _insight(
+            CATEGORY_RISK, "最大单日收益",
+            f"{up['symbol']} 在 {up_day} 单日收益 {_pct(up['max_return'])}，"
+            f"为区间内最大单日收益。",
+            "单日收益取各股票各自有效收益日的最大值，再跨股票比较。",
+            "正值表示单日上涨、负值表示单日下跌；该值为所选区间内的极端单日表现。",
+            DISCLAIMER,
+        ),
+        _insight(
+            CATEGORY_RISK, "最低单日收益",
+            f"{down['symbol']} 在 {down_day} 单日收益 {_pct(down['min_return'])}，"
+            f"为区间内最低单日收益。",
+            "单日收益取各股票各自有效收益日的最小值，再跨股票比较。",
+            _min_return_interpretation(down["min_return"]),
+            DISCLAIMER,
+        ),
+    ]
+
+
+# --- volatility regime -------------------------------------------------------
+
+def _vol_level_label(delta: float) -> str:
+    if delta > 0:
+        return "相对高波动阶段"
+    if delta < 0:
+        return "相对低波动阶段"
+    return "接近中位水平"
+
+
+def _volatility_regime_insights(data: DataFrame) -> list[EdaInsight]:
+    if "volatility_20d" not in data.columns:
+        return []
+    rows = []
+    for symbol, group in data.groupby("symbol", sort=True):
+        series = group.sort_values("trade_date")["volatility_20d"].dropna()
+        if len(series) < 2:
+            continue
+        last = float(series.iloc[-1])
+        median = float(series.median())
+        rows.append(
+            {"symbol": symbol, "last": last, "median": median, "delta": last - median}
+        )
+    if not rows:
+        return []
+    frame = DataFrame(rows)
+    rising = frame[frame["delta"] > 0]
+    falling = frame[frame["delta"] < 0]
+
+    if len(frame) == 1:
+        row = frame.iloc[0]
+        return [_insight(
+            CATEGORY_RISK, "当前波动率水平",
+            f"{row['symbol']} 最新 20 日波动率为 {_pct(row['last'])}，"
+            f"较区间中位数 {_pct(row['median'])}，处于{_vol_level_label(row['delta'])}。",
+            "以最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+            "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
+            DISCLAIMER,
+        )]
+
+    parts = []
+    if not rising.empty:
+        top = rising.loc[rising["delta"].idxmax()]
+        parts.append(
+            f"{len(rising)} 只处于相对高波动阶段，其中 {top['symbol']} 偏离中位数幅度最大"
+        )
+    if not falling.empty:
+        bottom = falling.loc[falling["delta"].idxmin()]
+        parts.append(
+            f"{len(falling)} 只处于相对低波动阶段，其中 {bottom['symbol']} 偏离中位数幅度最大"
+        )
+    if parts:
+        return [_insight(
+            CATEGORY_RISK, "当前波动率水平",
+            "；".join(parts) + "。",
+            "以各股票最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+            "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
+            DISCLAIMER,
+        )]
+    return [_insight(
+        CATEGORY_RISK, "当前波动率水平",
+        "所有股票的最新 20 日波动率均接近其区间中位水平。",
+        "以各股票最新一个 20 日波动率相对其区间中位数判断当前水平高低。",
+        "波动率水平高低不等于波动率正在上升或下降，此处仅描述历史水平。",
+        DISCLAIMER,
+    )]
 
 
 # --- correlation -------------------------------------------------------------

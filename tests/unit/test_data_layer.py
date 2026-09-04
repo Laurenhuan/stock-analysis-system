@@ -31,11 +31,24 @@ def no_token(monkeypatch):
 
 def test_fetch_rejects_invalid_symbol(no_token):
     with pytest.raises(InvalidSymbolError):
-        fetch_market_data("600519")  # missing exchange suffix
+        fetch_market_data("bad")  # 非 6 位数字
     with pytest.raises(InvalidSymbolError):
-        fetch_market_data("sh600519")  # wrong format
+        fetch_market_data("600519.SS")  # 未知交易所后缀
     with pytest.raises(InvalidSymbolError):
-        fetch_market_data(["600519.SH", "bad"])
+        fetch_market_data("12345")  # 位数不足
+    with pytest.raises(InvalidSymbolError):
+        fetch_market_data("800001")  # 北交所，不支持的市场
+    with pytest.raises(InvalidSymbolError):
+        fetch_market_data(["600519.SH", "bad"])  # 任一非法即整体拒绝
+
+
+def test_fetch_accepts_bare_and_prefixed_symbols(no_token):
+    # 裸 6 位、带后缀、腾讯/新浪前缀都会被标准化后按样例读取。
+    for sym in ("600519", "600519.SH", "600519.sh", "sh600519"):
+        df = fetch_market_data(sym, source="sample")
+        assert (df["symbol"] == "600519.SH").all()
+    df = fetch_market_data("000001", source="sample")
+    assert (df["symbol"] == "000001.SZ").all()
 
 
 def test_fetch_invalid_symbol_not_swallowed_in_auto(no_token):
@@ -65,7 +78,7 @@ def test_fetch_sample_contains_five_stocks(no_token):
 
 def test_fetch_sample_missing_symbol_raises(no_token):
     with pytest.raises(NoDataError):
-        fetch_market_data("999999.SH", source="sample")
+        fetch_market_data("600000.SH", source="sample")  # 合法代码但样例中没有
 
 
 def test_fetch_tushare_requires_token(no_token):
