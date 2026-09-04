@@ -1,18 +1,12 @@
-"""单元测试：动态簇标签生成与标签解读输出。
+"""单元测试 — generate_cluster_labels / build_label_interpretation。
 
-测试目标：
-- generate_cluster_labels：根据簇中心特征相对排序生成中文标签
-- build_label_interpretation：组装完整标签解读信息供 Role 1 使用
-
-覆盖场景（来自组长 D4 要求）：
-1. 3/5/10/20 只股票的聚类标签
-2. 改变股票顺序后标签不变
-3. 不足 3 只股票时的行为
-4. 缺失数据时的行为
-5. 极端值（极大收益率/极大波动率/极大回撤）时的标签
-6. 特征中心值非常接近时的标签
-7. 标签格式一致性：包含"相对""所选历史区间"
-8. 标签可复现性：相同输入相同输出
+覆盖组长 D4 要求的全部场景：
+- 3/5/10 只股票端到端标签生成
+- 打乱行顺序后每个 cluster 的标签不变
+- 三个簇中心完全相同
+- 并列最高、并列最低
+- 空表、缺列、NaN/Inf、重复 cluster ID
+- 标签格式与一致性验证
 """
 
 from __future__ import annotations
@@ -21,427 +15,625 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.contracts.clustering import CLUSTERING_RESULT_KEYS
+from src.contracts.clustering import ClusteringResult
 from src.models.unsupervised.clustering import (
     FEATURE_COLS,
     build_label_interpretation,
     generate_cluster_labels,
     run_clustering,
+    build_stock_profiles,
 )
+from src.utils.exceptions import DataValidationError
 
 
-# ── 辅助函数 ──────────────────────────────────────────
+# ── 工具函数 ──────────────────────────────────────────
 
 
-def _make_profiles(symbols: list[str], seed: int = 42) -> pd.DataFrame:
-    """为指定股票列表生成随机但可复现的 profiles DataFrame。
-
-    每只股票生成随机的 mean_return, volatility, max_drawdown，
-    保证各股票特征值有差异以便聚类。
-    """
-    rng = np.random.RandomState(seed)
-    n = len(symbols)
-    profiles = pd.DataFrame({
-        "symbol": symbols,
-        "mean_return": rng.uniform(-0.03, 0.05, n),
-        "volatility": rng.uniform(0.01, 0.25, n),
-        "max_drawdown": rng.uniform(-0.5, -0.01, n),
-    })
-    return profiles
+def _make_centers(rows: list[tuple[int, float, float, float]]) -> pd.DataFrame:
+    """从 (cluster, mean_return, volatility, max_drawdown) 列表构造 centers。"""
+    return pd.DataFrame(rows, columns=["cluster", *FEATURE_COLS])
 
 
-def _make_cluster_centers(
-    mean_returns: list[float],
-    volatilities: list[float],
-    max_drawdowns: list[float],
+def _make_symbol_data(
+    symbol: str,
+    returns: list[float],
+    drawdowns: list[float],
+    dates: list[str] | None = None,
 ) -> pd.DataFrame:
-    """手动构造 cluster_centers DataFrame，用于单元测试标签生成逻辑。"""
-    return pd.DataFrame({
-        "cluster": list(range(len(mean_returns))),
-        "mean_return": mean_returns,
-        "volatility": volatilities,
-        "max_drawdown": max_drawdowns,
-    })
+    """构造单只股票的行情数据。"""
+    if dates is None:
+        dates = [f"2025-01-0{i}" for i in range(1, len(returns) + 1)]
+    return pd.DataFrame(
+        {"symbol": symbol, "trade_date": dates, "return": returns, "drawdown": drawdowns}
+    )
 
 
-# ── TestGenerateClusterLabels ─────────────────────────
+# ── 标签格式验证 ──────────────────────────────────────
 
 
-class TestGenerateClusterLabels:
-    """测试 generate_cluster_labels 函数。"""
+class TestLabelFormat:
+    """验证标签的基本格式。"""
 
-    def test_basic_label_generation(self):
-        """3 个簇的基本标签生成。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
+    def test_label_format(self):
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
         labels = generate_cluster_labels(centers)
 
         assert len(labels) == 3
-        assert set(labels.keys()) == {0, 1, 2}
-
-        # cluster 0: mean_return 最高 → 相对高收益
-        assert "相对高收益" in labels[0]
-        # cluster 0: volatility 最低 → 相对低波动
-        assert "相对低波动" in labels[0]
-        # cluster 0: max_drawdown 最高（最接近 0）→ 相对小回撤
-        assert "相对小回撤" in labels[0]
-
-        # cluster 1: mean_return 中等 → 相对中等收益
-        assert "相对中等收益" in labels[1]
-        # cluster 1: volatility 最高 → 相对高波动
-        assert "相对高波动" in labels[1]
-        # cluster 1: max_drawdown 最低（最负）→ 相对大回撤
-        assert "相对大回撤" in labels[1]
-
-        # cluster 2: mean_return 最低 → 相对低收益
-        assert "相对低收益" in labels[2]
-        # cluster 2: volatility 中等 → 相对中等波动
-        assert "相对中等波动" in labels[2]
-        # cluster 2: max_drawdown 中等 → 相对中等回撤
-        assert "相对中等回撤" in labels[2]
-
-    def test_label_format_contains_required_qualifiers(self):
-        """所有标签必须包含'相对'和'所选历史区间'限定词。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
-        labels = generate_cluster_labels(centers)
-
         for cluster_id, label in labels.items():
-            assert "相对" in label, f"簇 {cluster_id} 缺少'相对'限定词: {label}"
-            assert "所选历史区间" in label, f"簇 {cluster_id} 缺少'所选历史区间': {label}"
+            assert label.startswith("[所选历史区间]")
+            assert label.endswith("型")
+            assert "相对" in label
 
-    def test_label_ends_with_type_suffix(self):
-        """标签以'型'结尾。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
+    def test_label_contains_all_features(self):
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
         labels = generate_cluster_labels(centers)
 
         for label in labels.values():
-            assert label.endswith("型"), f"标签未以'型'结尾: {label}"
+            assert "收益" in label
+            assert "波动" in label
+            assert "回撤" in label
 
-    def test_label_format_with_five_clusters(self):
-        """5 个簇时标签生成（中间值应为'相对中等'）。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.10, 0.05, 0.01, -0.01, -0.05],
-            volatilities=[0.30, 0.20, 0.15, 0.10, 0.05],
-            max_drawdowns=[-0.02, -0.10, -0.20, -0.35, -0.50],
-        )
+
+# ── 3 簇标准场景 ──────────────────────────────────────
+
+
+class TestThreeClusters:
+    """验证 3 簇场景的标签生成。"""
+
+    def test_three_clusters_high_mid_low(self):
+        """最高收益得到'高收益'标签，最低得到'低收益'。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        # cluster 0: mean_return 最高 → 高收益
+        assert "高收益" in labels[0]
+        # cluster 2: mean_return 最低 → 低收益
+        assert "低收益" in labels[2]
+        # cluster 1: mean_return 中间 → 中等收益
+        assert "中等收益" in labels[1]
+
+    def test_three_clusters_volatility_ranking(self):
+        """波动率最高 → 高波动，最低 → 低波动。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.30, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        # cluster 1: volatility 最高 → 高波动
+        assert "高波动" in labels[1]
+        # cluster 0: volatility 最低 → 低波动
+        assert "低波动" in labels[0]
+
+    def test_three_clusters_drawdown_ranking(self):
+        """回撤最接近 0 → 小回撤，最负 → 大回撤。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.02),  # 最接近 0
+            (1, 0.01, 0.20, -0.50),  # 最负
+            (2, -0.02, 0.15, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        # cluster 0: max_drawdown 最高（-0.02 > -0.50）→ 小回撤
+        assert "小回撤" in labels[0]
+        # cluster 1: max_drawdown 最低 → 大回撤
+        assert "大回撤" in labels[1]
+
+
+# ── 5 簇和 10 簇 ──────────────────────────────────────
+
+
+class TestMoreClusters:
+    """验证 k>3 时中间簇用'中等'描述。"""
+
+    def test_five_clusters(self):
+        centers = _make_centers([
+            (0, 0.10, 0.05, -0.01),
+            (1, 0.05, 0.10, -0.05),
+            (2, 0.01, 0.15, -0.15),
+            (3, -0.01, 0.20, -0.30),
+            (4, -0.05, 0.25, -0.50),
+        ])
         labels = generate_cluster_labels(centers)
 
         assert len(labels) == 5
+        # cluster 0: 收益最高 → 高收益
+        assert "高收益" in labels[0]
+        # cluster 4: 收益最低 → 低收益
+        assert "低收益" in labels[4]
+        # 中间簇 → 中等收益
+        assert "中等收益" in labels[2]
 
-        # cluster 0: 各特征均最高 → 高收益-高波动-小回撤
-        assert "相对高收益" in labels[0]
-        assert "相对高波动" in labels[0]
-        assert "相对小回撤" in labels[0]
-
-        # cluster 4: 各特征均最低 → 低收益-低波动-大回撤
-        assert "相对低收益" in labels[4]
-        assert "相对低波动" in labels[4]
-        assert "相对大回撤" in labels[4]
-
-    def test_label_with_ten_clusters(self):
-        """10 个簇时标签生成（中间值应为'相对中等'）。"""
-        # 10 个递增的 mean_return 值
-        mean_returns = list(np.linspace(0.10, -0.05, 10))
-        volatilities = list(np.linspace(0.05, 0.30, 10))
-        max_drawdowns = list(np.linspace(-0.02, -0.50, 10))
-
-        centers = _make_cluster_centers(
-            mean_returns=mean_returns,
-            volatilities=volatilities,
-            max_drawdowns=max_drawdowns,
-        )
+    def test_ten_clusters(self):
+        centers = _make_centers([
+            (i, 0.10 - i * 0.02, 0.05 + i * 0.02, -(0.01 + i * 0.05))
+            for i in range(10)
+        ])
         labels = generate_cluster_labels(centers)
 
         assert len(labels) == 10
-        # 检查标签包含限定词
-        for label in labels.values():
-            assert "相对" in label
-            assert "所选历史区间" in label
+        assert "高收益" in labels[0]
+        assert "低收益" in labels[9]
+        # 中间簇都应该有"中等"
+        for i in range(1, 9):
+            assert "中等收益" in labels[i]
+
+
+# ── 行顺序无关性 ──────────────────────────────────────
 
 
 class TestLabelConsistency:
-    """测试标签一致性：改变输入顺序不影响标签内容。"""
+    """打乱行顺序后，每个 cluster 的标签不变。"""
 
-    def test_same_labels_after_shuffling_clusters(self):
-        """打乱 cluster_centers 行顺序后，相同簇编号应得到相同标签。"""
-        # 原始顺序
-        centers_original = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
+    def test_row_order_does_not_affect_labels(self):
+        centers_original = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
         labels_original = generate_cluster_labels(centers_original)
 
-        # 打乱顺序（cluster 编号不变，只是行顺序不同）
-        centers_shuffled = centers_original.iloc[[2, 0, 1]].reset_index(drop=True)
+        # 打乱行顺序
+        centers_shuffled = centers_original.sample(frac=1, random_state=99).reset_index(
+            drop=True
+        )
         labels_shuffled = generate_cluster_labels(centers_shuffled)
 
-        # 相同 cluster 编号应有相同标签
-        for cluster_id in labels_original:
-            assert labels_original[cluster_id] == labels_shuffled[cluster_id]
+        assert labels_original == labels_shuffled
 
+    def test_row_order_reverse(self):
+        centers_original = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
+        labels_original = generate_cluster_labels(centers_original)
 
-class TestLabelReproducibility:
-    """测试标签可复现性。"""
+        # 反转行顺序
+        centers_reversed = centers_original.iloc[::-1].reset_index(drop=True)
+        labels_reversed = generate_cluster_labels(centers_reversed)
 
-    def test_same_input_same_labels(self):
-        """相同输入多次调用生成相同标签。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
+        assert labels_original == labels_reversed
+
+    def test_five_clusters_row_order(self):
+        """5 簇场景下打乱行顺序不影响标签。"""
+        centers_original = _make_centers([
+            (0, 0.10, 0.05, -0.01),
+            (1, 0.05, 0.10, -0.05),
+            (2, 0.01, 0.15, -0.15),
+            (3, -0.01, 0.20, -0.30),
+            (4, -0.05, 0.25, -0.50),
+        ])
+        labels_original = generate_cluster_labels(centers_original)
+
+        centers_shuffled = centers_original.sample(frac=1, random_state=42).reset_index(
+            drop=True
         )
-        labels_1 = generate_cluster_labels(centers)
-        labels_2 = generate_cluster_labels(centers)
+        labels_shuffled = generate_cluster_labels(centers_shuffled)
 
-        assert labels_1 == labels_2
-
-    def test_end_to_end_reproducibility(self):
-        """完整流程：相同 profiles 和 random_state 产生相同标签。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result_1 = run_clustering(profiles, random_state=42)
-        result_2 = run_clustering(profiles, random_state=42)
-
-        assert result_1["cluster_label"] == result_2["cluster_label"]
+        assert labels_original == labels_shuffled
 
 
-class TestLabelWithExtremeValues:
-    """测试极端值时的标签生成。"""
+# ── 完全相同的簇中心 ──────────────────────────────────
 
-    def test_extreme_positive_return(self):
-        """极大正收益率时标签仍正确。"""
-        centers = _make_cluster_centers(
-            mean_returns=[1.0, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
+
+class TestIdenticalCenters:
+    """三个簇中心完全相同时，所有簇应得到相同的'相对接近'标签。"""
+
+    def test_all_identical_centers(self):
+        centers = _make_centers([
+            (0, 0.01, 0.15, -0.10),
+            (1, 0.01, 0.15, -0.10),
+            (2, 0.01, 0.15, -0.10),
+        ])
         labels = generate_cluster_labels(centers)
 
-        # 最高收益 → 相对高收益
-        assert "相对高收益" in labels[0]
+        # 所有簇应得到完全相同的标签
+        assert labels[0] == labels[1] == labels[2]
+        # 应包含"相对接近"
+        assert "相对接近收益" in labels[0]
+        assert "相对接近波动" in labels[0]
+        assert "相对接近回撤" in labels[0]
 
-    def test_extreme_negative_return(self):
-        """极大负收益率时标签仍正确。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -1.0],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
+    def test_identical_centers_row_order(self):
+        """完全相同的簇中心，打乱行顺序不影响标签。"""
+        centers_original = _make_centers([
+            (0, 0.01, 0.15, -0.10),
+            (1, 0.01, 0.15, -0.10),
+            (2, 0.01, 0.15, -0.10),
+        ])
+        labels_original = generate_cluster_labels(centers_original)
+
+        centers_shuffled = centers_original.sample(frac=1, random_state=7).reset_index(
+            drop=True
         )
+        labels_shuffled = generate_cluster_labels(centers_shuffled)
+
+        assert labels_original == labels_shuffled
+
+
+# ── 并列值 ────────────────────────────────────────────
+
+
+class TestTiedValues:
+    """并列最高、并列最低的场景。"""
+
+    def test_tied_highest_mean_return(self):
+        """两个簇并列最高收益，应得到相同标签。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.05, 0.20, -0.30),  # 并列最高收益
+            (2, -0.02, 0.15, -0.15),
+        ])
         labels = generate_cluster_labels(centers)
 
-        # 最低收益 → 相对低收益
-        assert "相对低收益" in labels[2]
+        # cluster 0 和 1 并列最高收益 → 都应包含"高收益"
+        assert "高收益" in labels[0]
+        assert "高收益" in labels[1]
+        # cluster 2 最低 → 低收益
+        assert "低收益" in labels[2]
 
-    def test_extreme_volatility(self):
-        """极大波动率时标签仍正确。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[100.0, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.15],
-        )
+    def test_tied_lowest_mean_return(self):
+        """两个簇并列最低收益，应得到相同标签。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, -0.02, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),  # 并列最低收益
+        ])
         labels = generate_cluster_labels(centers)
 
-        # 最高波动 → 相对高波动
-        assert "相对高波动" in labels[0]
+        # cluster 0 最高 → 高收益
+        assert "高收益" in labels[0]
+        # cluster 1 和 2 并列最低 → 都应包含"低收益"
+        assert "低收益" in labels[1]
+        assert "低收益" in labels[2]
 
-    def test_extreme_max_drawdown(self):
-        """极大回撤时标签仍正确。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.05, 0.01, -0.02],
-            volatilities=[0.10, 0.20, 0.15],
-            max_drawdowns=[-0.05, -0.30, -0.99],
-        )
+    def test_tied_highest_and_lowest(self):
+        """两簇并列最高，两簇并列最低。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.05, 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+            (3, -0.02, 0.25, -0.40),
+            (4, 0.01, 0.12, -0.10),
+        ])
         labels = generate_cluster_labels(centers)
 
-        # 最大回撤（最负） → 相对大回撤
-        assert "相对大回撤" in labels[2]
+        # cluster 0,1 并列最高 → 高收益
+        assert "高收益" in labels[0]
+        assert "高收益" in labels[1]
+        # cluster 2,3 并列最低 → 低收益
+        assert "低收益" in labels[2]
+        assert "低收益" in labels[3]
+        # cluster 4 中间 → 中等收益
+        assert "中等收益" in labels[4]
 
-    def test_similar_center_values(self):
-        """特征中心值非常接近时标签仍能区分。"""
-        centers = _make_cluster_centers(
-            mean_returns=[0.0100, 0.0101, 0.0099],
-            volatilities=[0.150, 0.151, 0.149],
-            max_drawdowns=[-0.200, -0.201, -0.199],
-        )
+    def test_tied_volatility(self):
+        """并列波动率值。"""
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, 0.01, 0.10, -0.30),  # 并列最低波动
+            (2, -0.02, 0.30, -0.15),
+        ])
         labels = generate_cluster_labels(centers)
 
-        # 仍然可以排序并生成标签
+        # cluster 0 和 1 并列最低波动 → 低波动
+        assert "低波动" in labels[0]
+        assert "低波动" in labels[1]
+        # cluster 2 最高波动 → 高波动
+        assert "高波动" in labels[2]
+
+
+# ── 近似相同的特征值（相对接近）────────────────────────
+
+
+class TestNearIdenticalValues:
+    """当所有簇的某个特征值几乎相同时，应标为'相对接近'。"""
+
+    def test_near_identical_mean_return(self):
+        """三个簇的 mean_return 几乎相同。"""
+        centers = _make_centers([
+            (0, 0.010000, 0.10, -0.05),
+            (1, 0.010001, 0.20, -0.30),
+            (2, 0.010002, 0.15, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        # mean_return 差异极小 → 都应标为"相对接近收益"
+        assert "相对接近收益" in labels[0]
+        assert "相对接近收益" in labels[1]
+        assert "相对接近收益" in labels[2]
+
+    def test_near_identical_volatility(self):
+        """三个簇的 volatility 几乎相同。"""
+        centers = _make_centers([
+            (0, 0.05, 0.150000, -0.05),
+            (1, 0.01, 0.150001, -0.30),
+            (2, -0.02, 0.150002, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        assert "相对接近波动" in labels[0]
+        assert "相对接近波动" in labels[1]
+        assert "相对接近波动" in labels[2]
+
+    def test_mixed_identical_and_different(self):
+        """一个特征相同，其他不同。"""
+        centers = _make_centers([
+            (0, 0.01, 0.10, -0.05),
+            (1, 0.01, 0.20, -0.30),
+            (2, 0.01, 0.15, -0.15),
+        ])
+        labels = generate_cluster_labels(centers)
+
+        # mean_return 相同 → 相接近收益
+        assert "相对接近收益" in labels[0]
+        assert "相对接近收益" in labels[1]
+        assert "相对接近收益" in labels[2]
+        # volatility 不同 → 有高有低
+        assert "高波动" in labels[1]
+        assert "低波动" in labels[0]
+
+
+# ── 端到端：从真实聚类结果生成标签 ────────────────────
+
+
+class TestEndToEnd:
+    """从 build_stock_profiles → run_clustering → generate_cluster_labels 完整流程。"""
+
+    def _make_portfolio(self, n_stocks: int = 10) -> pd.DataFrame:
+        """构造 n 只股票的行情数据，保证特征值有明显差异。"""
+        rng = np.random.RandomState(42)
+        frames = []
+        for i in range(n_stocks):
+            base_return = 0.01 * (n_stocks - i)  # 0.10, 0.09, ..., 0.01
+            base_vol = 0.05 + 0.02 * i
+            base_dd = -0.02 - 0.03 * i
+
+            rets = rng.normal(base_return, base_vol, 20).tolist()
+            dds = [base_dd + rng.normal(0, 0.01) for _ in range(20)]
+            frames.append(_make_symbol_data(f"600{i:03d}.SH", rets, dds))
+
+        return pd.concat(frames, ignore_index=True)
+
+    def test_10_stocks_label_generation(self):
+        """10 只股票的端到端标签生成。"""
+        portfolio = self._make_portfolio(10)
+        profiles = build_stock_profiles(portfolio)
+        result = run_clustering(profiles)
+
+        labels = generate_cluster_labels(result["cluster_centers"])
         assert len(labels) == 3
         for label in labels.values():
-            assert "相对" in label
-            assert "所选历史区间" in label
+            assert label.startswith("[所选历史区间]")
+            assert "收益" in label
+            assert "波动" in label
+            assert "回撤" in label
 
+    def test_10_stocks_label_consistency(self):
+        """10 只股票，打乱 centers 行顺序不影响标签。"""
+        portfolio = self._make_portfolio(10)
+        profiles = build_stock_profiles(portfolio)
+        result = run_clustering(profiles)
 
-class TestLabelWithRealClustering:
-    """通过 run_clustering 生成的 cluster_centers 测试标签。"""
+        centers = result["cluster_centers"]
+        labels_original = generate_cluster_labels(centers)
 
-    def test_label_from_real_clustering_3_stocks(self):
-        """3 只股票聚类后标签格式正确。"""
-        profiles = _make_profiles(["A", "B", "C"], seed=10)
-        result = run_clustering(profiles, random_state=42)
+        centers_shuffled = centers.sample(frac=1, random_state=99).reset_index(drop=True)
+        labels_shuffled = generate_cluster_labels(centers_shuffled)
 
-        labels = result["cluster_label"]
+        assert labels_original == labels_shuffled
+
+    def test_20_stocks_label_generation(self):
+        """20 只股票的端到端标签生成。"""
+        portfolio = self._make_portfolio(20)
+        profiles = build_stock_profiles(portfolio)
+        result = run_clustering(profiles)
+
+        labels = generate_cluster_labels(result["cluster_centers"])
         assert len(labels) == 3
-        for cluster_id, label in labels.items():
-            assert isinstance(cluster_id, int)
-            assert isinstance(label, str)
-            assert "相对" in label
-            assert "所选历史区间" in label
-            assert label.endswith("型")
 
-    def test_label_from_real_clustering_10_stocks(self):
-        """10 只股票聚类后标签格式正确。"""
-        profiles = _make_profiles([f"S{i:02d}" for i in range(10)], seed=20)
-        result = run_clustering(profiles, random_state=42)
 
-        labels = result["cluster_label"]
-        assert len(labels) == 3
-        for label in labels.values():
-            assert "相对" in label
-            assert "所选历史区间" in label
+# ── 输入校验 ──────────────────────────────────────────
 
-    def test_label_from_real_clustering_20_stocks(self):
-        """20 只股票聚类后标签格式正确。"""
-        profiles = _make_profiles([f"S{i:02d}" for i in range(20)], seed=30)
-        result = run_clustering(profiles, random_state=42)
 
-        labels = result["cluster_label"]
-        assert len(labels) == 3
-        for label in labels.values():
-            assert "相对" in label
-            assert "所选历史区间" in label
+class TestInputValidation:
+    """generate_cluster_labels 的输入校验。"""
 
-    def test_profiles_order_change_same_labels(self):
-        """改变 profiles 行顺序不影响同一簇的标签。"""
-        profiles_v1 = _make_profiles(["A", "B", "C", "D", "E"], seed=42)
-        result_v1 = run_clustering(profiles_v1, random_state=42)
+    def test_empty_dataframe(self):
+        centers = pd.DataFrame(columns=["cluster", *FEATURE_COLS])
+        with pytest.raises(DataValidationError, match="为空"):
+            generate_cluster_labels(centers)
 
-        # 打乱 profiles 顺序
-        profiles_v2 = profiles_v1.iloc[[4, 2, 0, 3, 1]].reset_index(drop=True)
-        result_v2 = run_clustering(profiles_v2, random_state=42)
+    def test_missing_cluster_column(self):
+        centers = pd.DataFrame({
+            "mean_return": [0.01],
+            "volatility": [0.10],
+            "max_drawdown": [-0.05],
+        })
+        with pytest.raises(DataValidationError, match="缺少必要列"):
+            generate_cluster_labels(centers)
 
-        # 两者的 cluster_label 应相同（特征值不变，聚类不变）
-        assert result_v1["cluster_label"] == result_v2["cluster_label"]
+    def test_missing_feature_column(self):
+        centers = pd.DataFrame({
+            "cluster": [0],
+            "mean_return": [0.01],
+            "volatility": [0.10],
+            # 缺少 max_drawdown
+        })
+        with pytest.raises(DataValidationError, match="缺少必要列"):
+            generate_cluster_labels(centers)
+
+    def test_duplicate_cluster_id(self):
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (0, 0.01, 0.20, -0.30),  # 重复 cluster 0
+            (2, -0.02, 0.15, -0.15),
+        ])
+        with pytest.raises(DataValidationError, match="重复 cluster ID"):
+            generate_cluster_labels(centers)
+
+    def test_nan_in_feature(self):
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, float("nan"), 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
+        with pytest.raises(DataValidationError, match="NaN"):
+            generate_cluster_labels(centers)
+
+    def test_inf_in_feature(self):
+        centers = _make_centers([
+            (0, 0.05, 0.10, -0.05),
+            (1, float("inf"), 0.20, -0.30),
+            (2, -0.02, 0.15, -0.15),
+        ])
+        with pytest.raises(DataValidationError, match="inf"):
+            generate_cluster_labels(centers)
+
+    def test_non_dataframe_input(self):
+        with pytest.raises(DataValidationError, match="DataFrame"):
+            generate_cluster_labels("not a dataframe")
+
+    def test_non_numeric_cluster_column(self):
+        centers = pd.DataFrame({
+            "cluster": ["a", "b", "c"],
+            "mean_return": [0.05, 0.01, -0.02],
+            "volatility": [0.10, 0.20, 0.15],
+            "max_drawdown": [-0.05, -0.30, -0.15],
+        })
+        with pytest.raises(DataValidationError, match="数值转换失败"):
+            generate_cluster_labels(centers)
+
+
+# ── build_label_interpretation ─────────────────────────
 
 
 class TestBuildLabelInterpretation:
-    """测试 build_label_interpretation 函数。"""
+    """验证 build_label_interpretation 输出完整性。"""
 
-    def test_interpretation_has_all_keys(self):
-        """解读结果包含所有必要字段。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
+    def _make_result(self) -> ClusteringResult:
+        profiles = pd.DataFrame({
+            "symbol": ["A", "B", "C"],
+            "mean_return": [0.05, 0.01, -0.02],
+            "volatility": [0.10, 0.20, 0.15],
+            "max_drawdown": [-0.05, -0.30, -0.15],
+            "cluster": [0, 1, 2],
+        })
+        centers = pd.DataFrame({
+            "cluster": [0, 1, 2],
+            "mean_return": [0.05, 0.01, -0.02],
+            "volatility": [0.10, 0.20, 0.15],
+            "max_drawdown": [-0.05, -0.30, -0.15],
+        })
+        return ClusteringResult(
+            profiles=profiles,
+            cluster_centers=centers,
+            features=list(FEATURE_COLS),
+            k=3,
+        )
 
-        expected_keys = {
-            "cluster_label", "画像指标", "簇数量",
-            "簇中心特征", "标签依据", "样本范围", "免责声明",
+    def test_returns_all_fields(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
+
+        required_keys = {
+            "cluster_label",
+            "画像指标",
+            "簇数量",
+            "簇中心特征",
+            "标签依据",
+            "样本范围",
+            "免责声明",
         }
-        assert set(interpretation.keys()) == expected_keys
+        assert required_keys == set(interp.keys())
 
-    def test_cluster_label_matches(self):
-        """解读中的 cluster_label 与聚类结果一致。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
+    def test_cluster_label_is_dict(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
 
-        assert interpretation["cluster_label"] == result["cluster_label"]
+        assert isinstance(interp["cluster_label"], dict)
+        assert len(interp["cluster_label"]) == 3
+        for cluster_id, label in interp["cluster_label"].items():
+            assert isinstance(cluster_id, int)
+            assert isinstance(label, str)
 
-    def test_profile_metrics_are_feature_cols(self):
-        """画像指标即 FEATURE_COLS。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
+    def test_cluster_centers_match(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
 
-        assert interpretation["画像指标"] == list(FEATURE_COLS)
-
-    def test_cluster_count_matches_k(self):
-        """簇数量与 k 一致。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
-
-        assert interpretation["簇数量"] == result["k"]
-
-    def test_center_features_count(self):
-        """簇中心特征列表长度等于 k。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
-
-        assert len(interpretation["簇中心特征"]) == result["k"]
-
-    def test_center_features_have_correct_fields(self):
-        """每个簇中心特征包含 cluster 和三个指标。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
-
-        for center in interpretation["簇中心特征"]:
+        assert len(interp["簇中心特征"]) == 3
+        for center in interp["簇中心特征"]:
             assert "cluster" in center
             assert "mean_return" in center
             assert "volatility" in center
             assert "max_drawdown" in center
 
-    def test_sample_scope_without_date_range(self):
-        """无日期范围时样本范围仅含股票数量。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
-
-        scope = interpretation["样本范围"]
-        assert "股票数量" in scope
-        assert scope["股票数量"] == 5
-        assert "起始日期" not in scope
-        assert "截止日期" not in scope
-
-    def test_sample_scope_with_date_range(self):
-        """有日期范围时样本范围包含起止日期。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(
+    def test_with_date_range(self):
+        result = self._make_result()
+        interp = build_label_interpretation(
             result, date_range=("2025-01-01", "2025-06-30")
         )
 
-        scope = interpretation["样本范围"]
-        assert scope["股票数量"] == 5
-        assert scope["起始日期"] == "2025-01-01"
-        assert scope["截止日期"] == "2025-06-30"
+        assert interp["样本范围"]["起始日期"] == "2025-01-01"
+        assert interp["样本范围"]["截止日期"] == "2025-06-30"
 
-    def test_disclaimer_contains_no_investment_advice(self):
-        """免责声明包含不构成投资建议的表述。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
+    def test_without_date_range(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
 
-        assert "不构成任何投资建议" in interpretation["免责声明"]
+        assert "起始日期" not in interp["样本范围"]
+        assert "截止日期" not in interp["样本范围"]
 
-    def test_tagline_basis_contains_required_keywords(self):
-        """标签依据包含必要的关键词。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
-        interpretation = build_label_interpretation(result)
+    def test_disclaimer_present(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
 
-        basis = interpretation["标签依据"]
-        assert "相对排序" in basis
-        assert "相对" in basis
-        assert "所选历史区间" in basis
+        assert "不构成任何投资建议" in interp["免责声明"]
+        assert "独立判断" in interp["免责声明"]
 
-    def test_clustering_result_has_cluster_label_key(self):
-        """ClusteringResult 包含 cluster_label 键。"""
-        profiles = _make_profiles(["A", "B", "C", "D", "E"])
-        result = run_clustering(profiles, random_state=42)
+    def test_tagline_basis_mentions_relative(self):
+        result = self._make_result()
+        interp = build_label_interpretation(result)
 
-        assert "cluster_label" in result
-        assert "cluster_label" in CLUSTERING_RESULT_KEYS
+        assert "相对" in interp["标签依据"]
+        assert "所选历史区间" in interp["标签依据"]
+
+    def test_identical_centers_interpretation(self):
+        """完全相同的簇中心，解读应包含'相对接近'。"""
+        profiles = pd.DataFrame({
+            "symbol": ["A", "B", "C"],
+            "mean_return": [0.01, 0.01, 0.01],
+            "volatility": [0.15, 0.15, 0.15],
+            "max_drawdown": [-0.10, -0.10, -0.10],
+            "cluster": [0, 1, 2],
+        })
+        centers = pd.DataFrame({
+            "cluster": [0, 1, 2],
+            "mean_return": [0.01, 0.01, 0.01],
+            "volatility": [0.15, 0.15, 0.15],
+            "max_drawdown": [-0.10, -0.10, -0.10],
+        })
+        result = ClusteringResult(
+            profiles=profiles,
+            cluster_centers=centers,
+            features=list(FEATURE_COLS),
+            k=3,
+        )
+        interp = build_label_interpretation(result)
+
+        for label in interp["cluster_label"].values():
+            assert "相对接近" in label

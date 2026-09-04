@@ -246,31 +246,91 @@ def run_clustering(
     )
     result_centers.insert(0, "cluster", range(N_CLUSTERS))
 
-    # ── 生成动态中文簇标签 ──
-    # 根据簇中心特征的相对排序，生成中文标签
-    cluster_label = generate_cluster_labels(result_centers)
-
     return ClusteringResult(
         profiles=result_profiles,
         cluster_centers=result_centers,
         features=list(FEATURE_COLS),
         k=N_CLUSTERS,
-        cluster_label=cluster_label,
     )
 
 
 # ── 第三步：动态簇标签生成 ─────────────────────────────
 
-
-# 特征排名 → 中文描述的映射
-# rank 0 = 特征值最高，rank k-1 = 特征值最低
-# 对于 k=3：rank 0 = 高，rank 1 = 中等，rank 2 = 低
-# 对于 k>3：rank 0 = 高，rank k-1 = 低，其余 = 中等
-_LABEL_RENDITIONS: dict[str, tuple[str, str, str]] = {
-    "mean_return": ("相对高收益", "相对中等收益", "相对低收益"),
-    "volatility": ("相对高波动", "相对中等波动", "相对低波动"),
-    "max_drawdown": ("相对小回撤", "相对中等回撤", "相对大回撤"),
+# 特征值等级 → 中文描述的映射
+_LABEL_MAP: dict[str, dict[str, str]] = {
+    "mean_return": {
+        "high": "相对高收益",
+        "mid": "相对中等收益",
+        "low": "相对低收益",
+        "close": "相对接近收益",
+    },
+    "volatility": {
+        "high": "相对高波动",
+        "mid": "相对中等波动",
+        "low": "相对低波动",
+        "close": "相对接近波动",
+    },
+    "max_drawdown": {
+        "high": "相对小回撤",
+        "mid": "相对中等回撤",
+        "low": "相对大回撤",
+        "close": "相对接近回撤",
+    },
 }
+
+# 当所有簇的某个特征值几乎相同时的阈值
+# 使用特征值范围的 1% 作为判断"接近"的阈值
+_CLOSE_THRESHOLD_RATIO: float = 0.01
+
+
+def _validate_cluster_centers(df: pd.DataFrame) -> None:
+    """校验 cluster_centers 输入数据质量。"""
+    _validate_dataframe(df, "generate_cluster_labels")
+
+    if df.empty:
+        raise DataValidationError("generate_cluster_labels：输入 DataFrame 为空")
+
+    required = {"cluster", *FEATURE_COLS}
+    missing = required - set(df.columns)
+    if missing:
+        raise DataValidationError(
+            f"generate_cluster_labels：缺少必要列: {missing}"
+        )
+
+    if df["cluster"].duplicated().any():
+        dupes = df[df["cluster"].duplicated()]["cluster"].tolist()
+        raise DataValidationError(
+            f"generate_cluster_labels：存在重复 cluster ID: {dupes}"
+        )
+
+    for col in FEATURE_COLS:
+        _validate_numeric_column(df, col, "generate_cluster_labels")
+
+    # 校验 cluster 列为数值型
+    try:
+        pd.to_numeric(df["cluster"], errors="raise")
+    except (ValueError, TypeError) as e:
+        raise DataValidationError(
+            f"generate_cluster_labels：列 'cluster' 数值转换失败: {e}"
+        ) from e
+
+
+def _rank_with_ties(values: np.ndarray) -> np.ndarray:
+    """对数组进行排名，相同值获得相同 rank。
+
+    rank 0 = 最高值，rank k-1 = 最低值。
+    使用 pandas rank(method='min')：并列值获得相同 rank（取最小位置）。
+
+    返回长度为 len(values) 的整数 rank 数组。
+    """
+    # pandas rank 默认 ascending=True（值越小 rank 越小）
+    # 我们需要降序排列（值越大 rank 越小），所以 ascending=False
+    # 然后转换为 0-based index
+    series = pd.Series(values)
+    # rank(ascending=False): 最高值 rank=1, 次高 rank=2, ...
+    # 减 1 转为 0-based: 最高值 rank=0, 次高 rank=1, ...
+    ranks = (series.rank(method="min", ascending=False) - 1).astype(int).values
+    return ranks
 
 
 def generate_cluster_labels(
@@ -280,10 +340,11 @@ def generate_cluster_labels(
 
     标签格式：[所选历史区间]相对X收益-相对Y波动-相对Z回撤型
 
-    排序逻辑（以 3 个簇为例）：
-    - mean_return：值最高 → rank 0 → "相对高收益"，最低 → rank 2 → "相对低收益"
-    - volatility：值最高 → rank 0 → "相对高波动"，最低 → rank 2 → "相对低波动"
-    - max_drawdown：值最高（最接近 0）→ rank 0 → "相对小回撤"，最低（最负）→ rank 2 → "相对大回撤"
+    排序逻辑：
+    - 按每个特征值从高到低排名
+    - rank 0 = 最高/最好，rank k-1 = 最低/最差
+    - 如果所有簇的某个特征值几乎相同（范围 < 阈值），统一标为"相对接近"
+    - 并列值获得相同等级描述
 
     参数：
         cluster_centers: 包含 cluster 列和 FEATURE_COLS 的 DataFrame
@@ -291,43 +352,51 @@ def generate_cluster_labels(
     返回：
         dict[int, str]: 簇编号 → 中文标签
 
-    注意：
-        - 标签包含"相对"限定词，表示仅针对当前数据集的相对比较
-        - 标签包含"所选历史区间"限定，不构成投资建议
+    异常：
+        DataValidationError: 空表、缺列、NaN/inf、重复 cluster ID、非数值指标
     """
+    _validate_cluster_centers(cluster_centers)
+
     k = len(cluster_centers)
     labels: dict[int, str] = {}
 
     # 复制一份，避免修改原始传入的 DataFrame
     centers = cluster_centers.copy()
 
+    # 为每个特征计算 rank
     for col in FEATURE_COLS:
-        # 按特征值从高到低排序，获取排名
-        # rank 0 = 最高值，rank k-1 = 最低值
-        sorted_idx = centers[col].values.argsort()[::-1]
-        ranks = np.empty(k, dtype=int)
-        ranks[sorted_idx] = np.arange(k)
+        values = centers[col].values.astype(float)
+        ranks = _rank_with_ties(values)
         centers[f"_rank_{col}"] = ranks
+
+        # 计算特征值范围，判断是否所有值都接近
+        val_range = values.max() - values.min()
+        centers[f"_range_{col}"] = val_range
 
     # 为每个簇生成复合标签
     for _, row in centers.iterrows():
         cluster_id = int(row["cluster"])
 
-        # 取每个特征的排名对应的中文描述
-        # rank 0 → 最高/最好，rank k-1 → 最低/最差，其余 → 中等
         renditions = []
         for col in FEATURE_COLS:
-            rank = int(row[f"_rank_{col}"])
-            high, mid, low = _LABEL_RENDITIONS[col]
-            if rank == 0:
-                renditions.append(high)
-            elif rank == k - 1:
-                renditions.append(low)
-            else:
-                renditions.append(mid)
+            val_range = row[f"_range_{col}"]
+            values = centers[col].values.astype(float)
+            threshold = max(abs(values.max()), abs(values.min()), 1e-10) * _CLOSE_THRESHOLD_RATIO
 
-        # 组合成复合标签
-        # 格式：[所选历史区间]相对X收益-相对Y波动-相对Z回撤型
+            # 所有值几乎相同 → 标为"相对接近"
+            if val_range <= threshold:
+                renditions.append(_LABEL_MAP[col]["close"])
+            else:
+                # 使用实际极值判断，而非 rank 位置
+                # 这样并列值（无论并列最高还是最低）都能得到正确标签
+                current_val = float(row[col])
+                if current_val == values.max():
+                    renditions.append(_LABEL_MAP[col]["high"])
+                elif current_val == values.min():
+                    renditions.append(_LABEL_MAP[col]["low"])
+                else:
+                    renditions.append(_LABEL_MAP[col]["mid"])
+
         compound = "-".join(renditions)
         labels[cluster_id] = f"[所选历史区间]{compound}型"
 
@@ -342,6 +411,9 @@ def build_label_interpretation(
     date_range: tuple[str, str] | None = None,
 ) -> dict:
     """组装完整的标签解读信息，供 Role 1 渲染展示。
+
+    直接根据 cluster_centers 调用 generate_cluster_labels() 生成标签。
+    cluster_label 不在 ClusteringResult Contract 中，而是由此函数动态生成。
 
     返回字典包含以下字段：
     - cluster_label: dict[int, str] — 簇编号 → 中文标签
@@ -358,6 +430,9 @@ def build_label_interpretation(
     """
     centers = clustering_result["cluster_centers"]
     k = clustering_result["k"]
+
+    # 直接从 cluster_centers 生成标签
+    cluster_label = generate_cluster_labels(centers)
 
     # 构建簇中心特征列表
     center_features = []
@@ -376,6 +451,7 @@ def build_label_interpretation(
         "按从高到低排序后赋予对应中文描述。"
         "标签中的'相对'表示仅针对当前数据集内各簇的横向比较，"
         "'所选历史区间'表示特征值依赖于输入数据的时间范围。"
+        "当所有簇的某个特征值几乎相同时，标为'相对接近'。"
     )
 
     # 样本范围
@@ -393,7 +469,7 @@ def build_label_interpretation(
     )
 
     return {
-        "cluster_label": clustering_result["cluster_label"],
+        "cluster_label": cluster_label,
         "画像指标": list(clustering_result["features"]),
         "簇数量": k,
         "簇中心特征": center_features,
