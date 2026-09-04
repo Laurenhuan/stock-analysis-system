@@ -111,18 +111,20 @@ def test_market_service_rejects_invalid_single_date_bound() -> None:
 
 
 def test_market_overview_rejects_malformed_symbol() -> None:
+    # D4 起裸代码 600519 已合法，改用真正非法的未知交易所后缀。
     with pytest.raises(InvalidSymbolError, match="无效证券代码"):
         get_market_overview(
-            symbol="600519",
+            symbol="600519.XY",
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 10),
         )
 
 
 def test_market_overview_reports_unknown_sample_symbol() -> None:
+    # 600000.SH 格式合法（沪 6 开头）但不在 Sample Data 中。
     with pytest.raises(NoDataError, match="Sample Data 中没有"):
         get_market_overview(
-            symbol="999999.SH",
+            symbol="600000.SH",
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 10),
         )
