@@ -279,3 +279,52 @@ def test_eda_functions_do_not_mutate_input(multi_df):
     correlation_matrix(multi_df)
     missing_values_summary(multi_df)
     pd.testing.assert_frame_equal(multi_df, before)
+
+
+# --- variable symbol count and arbitrary dates -------------------------------
+
+@pytest.mark.parametrize("n", [2, 3, 8, 15, 20])
+def test_describe_statistics_variable_symbol_count(n):
+    syms = {f"STK{i:02d}": [100.0 + i, 110.0 + i, 105.0 + i, 120.0 + i] for i in range(n)}
+    result = describe_statistics(_make_df(syms))
+    assert result.shape[0] == n
+
+
+@pytest.mark.parametrize("n", [2, 3, 8, 15, 20])
+def test_correlation_matrix_variable_symbol_count(n):
+    syms = {f"STK{i:02d}": [100.0 + i, 110.0 + i, 105.0 + i, 120.0 + i, 115.0 + i] for i in range(n)}
+    corr = correlation_matrix(_make_df(syms))
+    assert corr.shape == (n, n)
+    assert np.allclose(np.diag(corr), 1.0)
+    assert list(corr.index) == list(syms)
+    assert list(corr.columns) == list(syms)
+
+
+def test_date_range_summary_arbitrary_dates():
+    # 非 2024 年、非固定演示股票：日期结论应来自输入本身。
+    rows = []
+    base = pd.Timestamp("2021-07-05")
+    for i, c in enumerate([50.0, 52.0, 51.0]):
+        rows.append({
+            "symbol": "AAA", "trade_date": base + pd.Timedelta(days=i),
+            "open": c * 0.99, "high": c * 1.01, "low": c * 0.98, "close": c,
+            "volume": 1000.0, "amount": c * 1000.0, "return": np.nan,
+            "cumulative_return": np.nan, "ma5": np.nan, "ma20": np.nan,
+            "volatility_20d": np.nan, "volume_change": np.nan, "drawdown": 0.0,
+        })
+    df = pd.DataFrame(rows)
+    result = date_range_summary(df)
+    assert result.loc[0, "start_date"] == pd.Timestamp("2021-07-05")
+    assert result.loc[0, "end_date"] == pd.Timestamp("2021-07-07")
+
+
+def test_correlation_matrix_no_common_trading_days():
+    # 两只股票完全没有共同交易日 → 明确报错而不是返回全 NaN。
+    rows = [
+        {"symbol": "AAA", "trade_date": pd.Timestamp("2023-03-01"), "return": 0.01},
+        {"symbol": "AAA", "trade_date": pd.Timestamp("2023-03-02"), "return": -0.01},
+        {"symbol": "BBB", "trade_date": pd.Timestamp("2023-05-10"), "return": 0.02},
+        {"symbol": "BBB", "trade_date": pd.Timestamp("2023-05-11"), "return": 0.03},
+    ]
+    with pytest.raises(InsufficientDataError):
+        correlation_matrix(pd.DataFrame(rows))
