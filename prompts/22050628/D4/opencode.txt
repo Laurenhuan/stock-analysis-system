@@ -1,0 +1,20 @@
+# Day 4 - opencode 使用记录（Role 6 / 线性回归与算法 Review）
+
+Agent: opencode
+日期: Day 4
+
+
+## 提示词（用户）
+1. 你是 Role 6，负责 D4 线性回归动态输入，并复核 Role 4/5。
+   分支：feat/regression-dynamic-range-review
+   只允许实现：LinearRegression
+   允许修改：src/models/supervised/regression.py、回归/时间切分/数据泄漏测试
+编写测试代买
+2. 我改好了，帮我检查实现与测试是否满足上述要求。
+3. 运行不了：报告 `TypeError: HeadingMixin.title() got an unexpected keyword argument 'icon'`。
+4. 更新venv这影响其他 role 的文件吗？
+5. 按 D1/D2 格式写 prompts 与 daily（D4）。
+
+
+
+
