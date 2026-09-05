@@ -62,16 +62,12 @@ def test_about_page_is_registered_at_exact_html_path() -> None:
 
 def test_lan_delivery_uses_documented_address_and_port() -> None:
     config = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
-    server = config["server"]
     script = LAN_SCRIPT.read_text(encoding="utf-8")
 
-    assert server == {
-        "address": "0.0.0.0",
-        "port": 8766,
-        "headless": True,
-    }
+    assert "server" not in config
     assert "--server.address 0.0.0.0" in script
     assert "--server.port %STOCK_APP_PORT%" in script
+    assert "--server.headless true" in script
     assert "about.html" in script
 
 
