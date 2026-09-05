@@ -9,6 +9,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 from src.models.supervised.classification import (
     FEATURE_NAMES,
+    forecast_next_direction,
     get_classification_sample_info,
     run_classification,
 )
@@ -325,3 +326,17 @@ class TestDynamicSingleStockInput:
         train_end = pd.Timestamp(info["train_date_range"].split(" 至 ")[1])
         test_start = pd.Timestamp(info["test_date_range"].split(" 至 ")[0])
         assert train_end < test_start
+
+def test_next_direction_signal_uses_latest_date_without_mutating_input() -> None:
+    data = _make_df()
+    original = data.copy(deep=True)
+
+    first = forecast_next_direction(data)
+    second = forecast_next_direction(data)
+
+    assert first == second
+    assert first["as_of_date"] == data["trade_date"].iloc[-1].date().isoformat()
+    assert first["predicted_class"] in {0, 1}
+    assert first["direction_label"] in {"上涨倾向", "非上涨倾向"}
+    assert first["training_rows"] >= 50
+    pd.testing.assert_frame_equal(data, original)

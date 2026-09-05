@@ -1,0 +1,35 @@
+D5 首页、About 与局域网交付验证
+日期：2026-09-05
+
+实现范围：
+- 首页产品化信息架构与两个主要入口
+- Streamlit 原生 /about.html 路由
+- Gitee 源码入口和基于真实 Git 记录的团队协作概览
+- 0.0.0.0:8766 监听及 scripts/run_lan.cmd
+
+验证：
+1. python -m compileall -q app.py app_pages
+   结果：通过
+2. python -m pytest -q tests/integration/test_streamlit_app.py
+   结果：首页、About、原分析页面和局域网配置测试通过
+3. python -m pytest -q
+   首轮结果：477 passed in 18.72s
+   最终交付结果：480 passed in 11.31s
+4. git diff --check
+   结果：通过；仅有现存 CRLF/LF 提示，无空白错误
+5. HTTP
+   localhost 首页：200
+   localhost /about.html：200
+   当前局域网 IPv4 首页：200
+   当前局域网 IPv4 /about.html：200
+   监听地址：0.0.0.0:8766
+
+浏览器自动化说明：
+本机浏览器控制进程受 sandbox setup refresh 错误影响，未生成桌面/移动端截图。
+页面组件树已由 Streamlit AppTest 验证；最终提交前仍建议由操作者在浏览器中人工检查
+首页、/about.html、深色模式和窄屏布局。
+
+最终交付补充：
+- Spearman、Pearson、Kendall 使用同一份 968 行样例均生成 4×4 相关矩阵。
+- 相关 Service 与 Streamlit 定向测试：30 passed in 7.05s。
+- 选择器增加中文方法说明，并明确修改后需重新点击“加载并比较”。

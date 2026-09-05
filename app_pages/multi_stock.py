@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pandas as pd
 import streamlit as st
 
 from app_pages.shared import (
@@ -13,6 +14,7 @@ from app_pages.shared import (
 )
 from src.services import (
     build_eda_dashboard,
+    get_clustering_date_diagnostics,
     get_market_metadata,
     get_market_summary,
     get_sample_symbols,
@@ -22,12 +24,59 @@ from src.services import (
 from src.utils.exceptions import StockAnalysisError
 
 
-st.caption("一组多股与日期条件，复用于 EDA 和固定 KMeans(k=3) 聚类。")
+_CORRELATION_METHOD_LABELS = {
+    "spearman": "Spearman（秩相关，默认）",
+    "pearson": "Pearson（线性相关）",
+    "kendall": "Kendall τ（秩一致性）",
+}
+
+
+def _percent_table(
+    frame: pd.DataFrame,
+    *,
+    percentage_columns: tuple[str, ...],
+    labels: dict[str, str],
+) -> pd.DataFrame:
+    display = frame.copy()
+    for column in percentage_columns:
+        if column in display.columns:
+            display[column] = pd.to_numeric(
+                display[column], errors="coerce"
+            ).mul(100)
+    return display.rename(columns=labels)
+
+
+def _render_insights(insights: list[dict[str, str]]) -> None:
+    if not insights:
+        st.caption("当前数据未形成这一主题的额外结论。")
+        return
+    for insight in insights:
+        with st.container(border=True):
+            st.markdown(f"**{insight['title']}**")
+            st.write(insight["finding"])
+            with st.expander("查看依据与解释"):
+                st.caption(f"数据依据：{insight['evidence']}")
+                st.write(insight["interpretation"])
+
+
+def _render_core_insights(insights: list[dict[str, str]]) -> None:
+    if not insights:
+        st.info("当前样本不足以形成核心摘要。")
+        return
+    for offset in range(0, len(insights), 3):
+        columns = st.columns(3)
+        for column, insight in zip(columns, insights[offset : offset + 3]):
+            with column:
+                with st.container(border=True):
+                    st.caption(insight["category"].replace("_", " ").upper())
+                    st.markdown(f"**{insight['title']}**")
+                    st.write(insight["finding"])
+
+
+st.caption("一组多股与日期条件，复用于问题驱动 EDA 和固定 KMeans(k=3) 聚类。")
 
 searched_symbols, searched_names = render_stock_search("multi")
-symbol_options = list(
-    dict.fromkeys([*get_sample_symbols(), *searched_symbols])
-)
+symbol_options = list(dict.fromkeys([*get_sample_symbols(), *searched_symbols]))
 
 with st.form("multi_stock_query"):
     symbols_col, source_col = st.columns([2, 1.2], vertical_alignment="bottom")
@@ -77,10 +126,16 @@ with st.form("multi_stock_query"):
     with method_col:
         correlation_method = st.selectbox(
             "相关系数方法",
-            options=("spearman", "pearson", "kendall"),
+            options=tuple(_CORRELATION_METHOD_LABELS),
+            format_func=_CORRELATION_METHOD_LABELS.__getitem__,
+            help=(
+                "三种方法均已实现。修改选项后，需要再次点击“加载并比较”"
+                "才会按新方法重新计算。"
+            ),
             key="multi_correlation_method",
             persist_state="session",
         )
+        st.caption("修改相关系数方法后，请重新点击“加载并比较”应用选择。")
 
     submitted = st.form_submit_button(
         "加载并比较",
@@ -128,13 +183,16 @@ try:
         dict.fromkeys(market_data["symbol"].astype(str).tolist())
     )
     loaded_by_code = {
-        symbol.split(".", maxsplit=1)[0]: symbol
-        for symbol in loaded_symbols
+        symbol.split(".", maxsplit=1)[0]: symbol for symbol in loaded_symbols
     }
     active_symbols = list(
         dict.fromkeys(
             loaded_by_code.get(
-                "".join(character for character in requested if character.isdigit()),
+                "".join(
+                    character
+                    for character in requested
+                    if character.isdigit()
+                ),
                 requested,
             )
             for requested in query["symbols"]
@@ -158,6 +216,11 @@ with st.container(horizontal=True, gap="medium"):
     st.metric("首个交易日", summary["first_date"], border=True)
     st.metric("最后交易日", summary["last_date"], border=True)
 
+st.warning(
+    "所有结论仅描述所选历史区间，不代表未来表现，不构成投资建议。",
+    icon=":material/warning:",
+)
+
 eda_tab, clustering_tab = st.tabs(
     ["EDA 分析", "股票聚类"],
     key="multi_workspace_tabs",
@@ -166,12 +229,18 @@ eda_tab, clustering_tab = st.tabs(
 
 if eda_tab.open:
     with eda_tab:
-        candlestick_symbol = st.selectbox(
-            "K 线股票",
-            options=active_symbols,
-            key="multi_candlestick_symbol",
-            persist_state="page",
-        )
+        with st.expander("图表设置", icon=":material/tune:"):
+            candlestick_symbol = st.selectbox(
+                "K 线股票",
+                options=active_symbols,
+                key="multi_candlestick_symbol",
+                persist_state="page",
+            )
+            st.caption(
+                "相关系数："
+                f"{_CORRELATION_METHOD_LABELS[query['correlation_method']]}；"
+                "K 线仅改变价格图，不改变其他统计结论。"
+            )
         try:
             dashboard = build_eda_dashboard(
                 market_data,
@@ -181,54 +250,94 @@ if eda_tab.open:
         except StockAnalysisError as error:
             st.error(f"EDA 运行失败：{error}", icon=":material/error:")
         else:
-            insight_tab, risk_tab, chart_tab, quality_tab = st.tabs(
-                ["分析结论", "收益与风险", "图表", "数据质量"]
+            presentation = dashboard["presentation"]
+            sections = presentation["sections"]
+
+            st.subheader("先看结论")
+            st.caption("从已有统计结果中筛选最多 5 条核心发现；详细依据按主题展开。")
+            _render_core_insights(presentation["core_insights"])
+            if presentation["summary_sentences"]:
+                st.markdown("**本次区间摘要**")
+                for sentence in presentation["summary_sentences"]:
+                    st.write(f"• {sentence}")
+
+            (
+                performance_tab,
+                risk_tab,
+                relation_tab,
+                trend_tab,
+                details_tab,
+            ) = st.tabs(
+                ["收益表现", "风险画像", "股票关系", "趋势状态", "详细统计"]
             )
-            with insight_tab:
-                category_names = {
-                    "performance": "表现",
-                    "risk": "风险",
-                    "distribution": "收益分布",
-                    "trend": "趋势",
-                    "correlation": "相关性",
-                    "data_quality": "数据质量",
-                }
-                for insight in dashboard["insights"]:
-                    with st.container(border=True):
-                        st.badge(
-                            category_names.get(insight["category"], "结论")
-                        )
-                        st.subheader(insight["title"])
-                        st.write(insight["finding"])
-                        st.caption(f"依据：{insight['evidence']}")
-                        st.write(f"解释：{insight['interpretation']}")
-                        st.caption(insight["caveat"])
+
+            with performance_tab:
+                st.subheader("谁的区间表现更突出？")
+                st.caption(
+                    "先读相对结论，再查看累计收益、日均收益、胜率与收益波动的证据。"
+                )
+                _render_insights(sections["performance"])
+                returns = _percent_table(
+                    dashboard["returns"],
+                    percentage_columns=(
+                        "mean_return",
+                        "cumulative_return",
+                        "win_rate",
+                        "std_return",
+                    ),
+                    labels={
+                        "symbol": "股票",
+                        "mean_return": "日均收益（%）",
+                        "cumulative_return": "累计收益（%）",
+                        "win_rate": "上涨日占比（%）",
+                        "std_return": "日收益标准差（%）",
+                    },
+                )
+                st.dataframe(returns, hide_index=True)
+                st.plotly_chart(dashboard["returns_figure"], width="stretch")
+
             with risk_tab:
-                st.subheader("区间收益与风险")
-                st.dataframe(dashboard["returns"], hide_index=True)
-                st.dataframe(dashboard["risk_return"], hide_index=True)
-                st.plotly_chart(dashboard["risk_figure"], width="stretch")
-                st.subheader("收益分布与极端交易日")
-                st.dataframe(
-                    dashboard["return_distribution"], hide_index=True
+                st.subheader("收益伴随了怎样的风险？")
+                st.caption(
+                    "波动率衡量日收益离散程度；最大回撤衡量区间内从高点到低点的最深跌幅。"
+                    "两者分开绘制，避免正负量纲混在同一坐标轴。"
                 )
-                st.dataframe(dashboard["extreme_returns"], hide_index=True)
-                st.plotly_chart(
-                    dashboard["return_distribution_figure"],
-                    width="stretch",
+                _render_insights(sections["risk"])
+                risk = _percent_table(
+                    dashboard["risk_return"],
+                    percentage_columns=(
+                        "mean_return",
+                        "volatility",
+                        "max_drawdown",
+                    ),
+                    labels={
+                        "symbol": "股票",
+                        "mean_return": "日均收益（%）",
+                        "volatility": "日波动率（%）",
+                        "max_drawdown": "最大回撤（%）",
+                    },
                 )
-                st.plotly_chart(
-                    dashboard["rolling_volatility_figure"],
-                    width="stretch",
+                st.dataframe(risk, hide_index=True)
+                left, right = st.columns(2)
+                with left:
+                    st.markdown("**日波动率对比（%）**")
+                    st.bar_chart(risk.set_index("股票")[["日波动率（%）"]])
+                with right:
+                    st.markdown("**最大回撤对比（%）**")
+                    st.bar_chart(risk.set_index("股票")[["最大回撤（%）"]])
+                with st.expander("查看滚动波动率时序图"):
+                    st.plotly_chart(
+                        dashboard["rolling_volatility_figure"],
+                        width="stretch",
+                    )
+
+            with relation_tab:
+                st.subheader("这些股票的日收益是否同步？")
+                st.caption(
+                    "相关系数接近 1 表示同向变化较多，接近 -1 表示反向变化较多；"
+                    "相关不等于因果，也可能随区间变化。"
                 )
-            with chart_tab:
-                st.plotly_chart(
-                    dashboard["candlestick_figure"], width="stretch"
-                )
-                st.plotly_chart(dashboard["price_figure"], width="stretch")
-                st.plotly_chart(
-                    dashboard["returns_figure"], width="stretch"
-                )
+                _render_insights(sections["correlation"])
                 if dashboard["correlation_figure"] is None:
                     st.info(
                         "股票间重叠交易日不足，相关矩阵暂不展示；"
@@ -238,13 +347,75 @@ if eda_tab.open:
                     st.plotly_chart(
                         dashboard["correlation_figure"], width="stretch"
                     )
-            with quality_tab:
-                st.subheader("分股日期范围")
+                    with st.expander("查看相关系数矩阵"):
+                        st.dataframe(dashboard["correlation"])
+
+            with trend_tab:
+                st.subheader("最新价格处于怎样的历史位置？")
+                st.caption(
+                    "这里只比较收盘价、MA5 与 MA20 的相对位置，不把均线状态解释为买卖信号。"
+                )
+                _render_insights(sections["trend"])
+                trend = _percent_table(
+                    presentation["trend_snapshot"],
+                    percentage_columns=("cumulative_return",),
+                    labels={
+                        "symbol": "股票",
+                        "close": "最新收盘价",
+                        "ma5": "MA5",
+                        "ma20": "MA20",
+                        "cumulative_return": "区间累计收益（%）",
+                        "price_vs_ma20": "收盘价相对 MA20",
+                        "ma5_vs_ma20": "MA5 相对 MA20",
+                    },
+                )
+                st.dataframe(trend, hide_index=True)
+
+            with details_tab:
+                st.subheader("收益分布与极端交易日")
+                _render_insights(sections["distribution"])
+                distribution = dashboard["return_distribution"].rename(
+                    columns={
+                        "symbol": "股票",
+                        "skewness": "偏度",
+                        "kurtosis": "超额峰度",
+                        "n": "有效日收益数",
+                    }
+                )
+                extremes = _percent_table(
+                    dashboard["extreme_returns"],
+                    percentage_columns=("max_return", "min_return"),
+                    labels={
+                        "symbol": "股票",
+                        "max_return": "最高单日收益（%）",
+                        "max_return_date": "发生日期",
+                        "min_return": "最低单日收益（%）",
+                        "min_return_date": "发生日期 ",
+                    },
+                )
+                st.dataframe(distribution, hide_index=True)
+                st.dataframe(extremes, hide_index=True)
+                st.plotly_chart(
+                    dashboard["return_distribution_figure"],
+                    width="stretch",
+                )
+                with st.expander("查看价格、K 线与描述统计"):
+                    st.plotly_chart(
+                        dashboard["candlestick_figure"], width="stretch"
+                    )
+                    st.plotly_chart(
+                        dashboard["price_figure"], width="stretch"
+                    )
+                    st.dataframe(dashboard["descriptive_statistics"])
+
+            with st.expander(
+                "数据质量与样本范围", icon=":material/fact_check:"
+            ):
+                _render_insights(sections["data_quality"])
+                st.markdown("**分股日期范围**")
                 st.dataframe(dashboard["date_ranges"], hide_index=True)
-                st.subheader("缺失值")
+                st.markdown("**缺失值**")
                 st.dataframe(dashboard["missing_values"], hide_index=True)
-                st.subheader("描述统计")
-                st.dataframe(dashboard["descriptive_statistics"])
 
 if clustering_tab.open:
     with clustering_tab:
@@ -263,7 +434,66 @@ if clustering_tab.open:
                     market_data, random_state=42
                 )
             except StockAnalysisError as error:
-                st.error(f"股票聚类运行失败：{error}", icon=":material/error:")
+                diagnostics = (
+                    get_clustering_date_diagnostics(market_data)
+                    if "比较区间不一致" in str(error)
+                    else None
+                )
+                if diagnostics is None or diagnostics["is_consistent"]:
+                    st.error(
+                        f"股票聚类运行失败：{error}",
+                        icon=":material/error:",
+                    )
+                else:
+                    st.error(
+                        "所选股票的有效历史区间不一致，"
+                        "暂时无法按相同区间公平聚类。",
+                        icon=":material/date_range:",
+                    )
+                    st.info(
+                        "建议把查询区间调整到 "
+                        f"{diagnostics['common_start']} 至 "
+                        f"{diagnostics['common_end']}，或者移除下面"
+                        "历史范围受限的股票后重新加载。"
+                    )
+                    limiting_ranges = diagnostics[
+                        "limiting_ranges"
+                    ].copy()
+                    limiting_ranges["限制原因"] = limiting_ranges.apply(
+                        lambda row: "、".join(
+                            reason
+                            for limited, reason in (
+                                (
+                                    row["limits_common_start"],
+                                    "起始日期较晚",
+                                ),
+                                (
+                                    row["limits_common_end"],
+                                    "截止日期较早",
+                                ),
+                            )
+                            if limited
+                        ),
+                        axis=1,
+                    )
+                    st.markdown("**限制共同区间的股票**")
+                    st.dataframe(
+                        limiting_ranges[
+                            [
+                                "symbol",
+                                "start_date",
+                                "end_date",
+                                "限制原因",
+                            ]
+                        ].rename(
+                            columns={
+                                "symbol": "股票代码",
+                                "start_date": "最早有效日期",
+                                "end_date": "最晚有效日期",
+                            }
+                        ),
+                        hide_index=True,
+                    )
             else:
                 result = dashboard["result"]
                 interpretation = dashboard["interpretation"]
@@ -278,17 +508,22 @@ if clustering_tab.open:
                 centers["cluster"] = centers["cluster"].map(
                     lambda value: f"Cluster {value}"
                 )
+                sample_scope = interpretation["样本范围"]
                 st.success(
                     "已根据本次所选股票和历史区间的聚类中心动态生成中文画像。",
                     icon=":material/label:",
                 )
-                st.caption("Cluster 编号没有固定好坏含义，应结合动态画像和中心值阅读。")
+                st.caption(
+                    f"展示区间：{sample_scope['起始日期']} 至 "
+                    f"{sample_scope['截止日期']} · "
+                    f"{sample_scope['股票数量']} 只股票。"
+                    "Cluster 编号没有固定好坏含义。"
+                )
                 st.dataframe(profiles, hide_index=True)
                 st.subheader("原始尺度聚类中心")
                 st.dataframe(centers, hide_index=True)
-                with st.expander("查看标签依据与样本范围"):
+                with st.expander("查看标签依据"):
                     st.write(interpretation["标签依据"])
-                    st.json(interpretation["样本范围"])
                     st.caption(interpretation["免责声明"])
                 left_chart, right_chart = st.columns(2)
                 with left_chart:
@@ -306,7 +541,34 @@ if clustering_tab.open:
                         color="cluster_label",
                     )
 
-st.warning(
-    "所有结论仅描述所选历史区间，不代表未来表现，不构成投资建议。",
-    icon=":material/warning:",
+st.divider()
+st.subheader("下一步：选择一只关注股票", icon=":material/arrow_forward:")
+st.caption(
+    "选择后将继承当前股票池的日期和数据来源，进入单股模型分析，无需重复输入。"
 )
+current_focus = st.session_state.get("focus_symbol")
+default_index = (
+    active_symbols.index(current_focus)
+    if current_focus in active_symbols
+    else 0
+)
+focus_symbol = st.selectbox(
+    "关注股票",
+    options=active_symbols,
+    index=default_index,
+    key="multi_focus_selection",
+)
+if st.button(
+    "进入单股模型分析",
+    type="primary",
+    icon=":material/show_chart:",
+    key="multi_to_single",
+):
+    st.session_state.focus_symbol = focus_symbol
+    st.session_state.single_query = {
+        "symbol": focus_symbol,
+        "start_date": query["start_date"],
+        "end_date": query["end_date"],
+        "source": query["source"],
+    }
+    st.switch_page("app_pages/single_stock.py")
