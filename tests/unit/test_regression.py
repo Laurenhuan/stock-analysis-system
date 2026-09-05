@@ -4,7 +4,7 @@
 - 正常输入：Contract 核心键、metrics 键、predictions 列与日期升序
 - 不同股票、不同日期范围、日期乱序、多股票报错
 - 下一日标签对齐（目标=return(t+1)）、时间切分边界、无数据泄漏
-- 滚动特征无未来数据（特征只含 ≤ t 信息）
+- 严格日期顺序、重复日期、非法数值和异常类型
 - 样本不足、无数据、全 NaN、常量目标
 - 指标与 sklearn 底层结果一致、结果可复现
 - 无固定股票/日期：函数只消费传入 DataFrame，不写死 symbol/年份
@@ -15,8 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score
 
 from src.contracts.supervised import REGRESSION_PREDICTION_COLUMNS
 from src.data.features import build_common_features
@@ -52,8 +51,7 @@ def _features(symbol: str = "600519.SH", n_days: int = 120, start: str = "2024-0
 class TestContract:
     def test_core_keys_and_metrics_keys(self) -> None:
         result = fit_regression(_features())
-        # 核心键必须存在（允许额外顶层元信息键）
-        assert {"model", "feature_names", "metrics", "predictions"} <= set(result.keys())
+        assert set(result) == {"model", "feature_names", "metrics", "predictions"}
         # metrics 必须保持 Contract 的 mae/r2 两个键
         assert set(result["metrics"].keys()) == {"mae", "r2"}
 
@@ -61,13 +59,6 @@ class TestContract:
         pred = fit_regression(_features())["predictions"]
         assert list(pred.columns) == list(REGRESSION_PREDICTION_COLUMNS)
         assert pred["trade_date"].is_monotonic_increasing
-
-    def test_metadata_fields_present(self) -> None:
-        r = fit_regression(_features())
-        for k in ("rmse", "n_original", "n_valid", "n_train", "n_test", "window_loss", "warning"):
-            assert k in r, f"缺少元信息键 {k}"
-        assert r["window_loss"] == r["n_original"] - r["n_valid"]
-        assert r["n_train"] + r["n_test"] == r["n_valid"]
 
     def test_feature_names_match_contract(self) -> None:
         assert fit_regression(_features())["feature_names"] == FEATURE_COLS
@@ -99,9 +90,12 @@ class TestTemporalSplitAndLeakage:
 
     def test_split_boundary_ratio(self) -> None:
         """训练/测试样本数符合 80/20 切分边界。"""
-        r = fit_regression(_features())
-        assert r["n_train"] == int(r["n_valid"] * 0.8)
-        assert r["n_test"] == r["n_valid"] - int(r["n_valid"] * 0.8)
+        frame = _features().copy()
+        frame["next_return"] = frame["return"].shift(-1)
+        data = frame.dropna(subset=FEATURE_COLS + ["next_return"])
+        split = int(len(data) * 0.8)
+        predictions = fit_regression(frame)["predictions"]
+        assert len(predictions) == len(data) - split
 
     def test_date_out_of_order_raises(self) -> None:
         df = _features()
@@ -109,15 +103,11 @@ class TestTemporalSplitAndLeakage:
         with pytest.raises(DataValidationError):
             fit_regression(df.iloc[::-1].reset_index(drop=True))
 
-    def test_no_future_data_in_features(self) -> None:
-        """特征只含 ≤ t 信息：不应出现任何 shift(-k) 或未来均值。"""
+    def test_duplicate_dates_raise(self) -> None:
         frame = _features()
-        # 公共特征里若出现未来项会暴露为 NaN 或泄漏；这里校验特征列都在当前/过去。
-        # 具体：ma/vol/drawdown/volume_change 都是基于 ≤ t 的滚动/累计。
-        assert "ma20" in frame.columns and "volatility_20d" in frame.columns
-        # 对比：特征不应等于"未来相邻值"（构造对照）
-        f = frame[FEATURE_COLS]
-        assert not f.isna().all().any()
+        frame.loc[30, "trade_date"] = frame.loc[29, "trade_date"]
+        with pytest.raises(DataValidationError, match="不能重复"):
+            fit_regression(frame)
 
 
 class TestDynamicInput:
@@ -141,6 +131,11 @@ class TestDynamicInput:
 
 
 class TestEdgeCases:
+    @pytest.mark.parametrize("bad_input", [None, [], "not a dataframe"])
+    def test_non_dataframe_raises(self, bad_input) -> None:
+        with pytest.raises(DataValidationError, match="DataFrame"):
+            fit_regression(bad_input)
+
     def test_multi_symbol_raises(self) -> None:
         two = pd.concat([_make_market_data("A"), _make_market_data("B")], ignore_index=True)
         with pytest.raises(DataValidationError):
@@ -161,16 +156,35 @@ class TestEdgeCases:
         with pytest.raises(InsufficientDataError):
             fit_regression(df)
 
-    def test_constant_target_warns_and_r2_nan(self) -> None:
-        """目标近似常量 → R² 为 NaN 且给出 warning，不报错。"""
+    def test_infinite_feature_raises(self) -> None:
+        df = _features()
+        df.loc[30, "ma5"] = np.inf
+        with pytest.raises(DataValidationError, match="非有限值"):
+            fit_regression(df)
+
+    def test_nonnumeric_feature_raises(self) -> None:
+        df = _features()
+        df["ma5"] = df["ma5"].astype(object)
+        df.loc[30, "ma5"] = "bad"
+        with pytest.raises(DataValidationError, match="无法转换"):
+            fit_regression(df)
+
+    def test_invalid_date_raises(self) -> None:
+        df = _features()
+        df["trade_date"] = df["trade_date"].astype(object)
+        df.loc[30, "trade_date"] = "not-a-date"
+        with pytest.raises(DataValidationError, match="无法解析"):
+            fit_regression(df)
+
+    def test_constant_target_raises(self) -> None:
+        """目标近似常量时 R² 无法定义，应明确报告样本不足。"""
         df = _features()
         # 构造常量目标：close 恒定 → return 恒 0 → next_return 恒 0
         df["close"] = 100.0
         df = build_common_features(df)
         # 重新构建特征（feature_edges）：用恒定 close 重算
-        r = fit_regression(df)
-        assert r["metrics"]["r2"] != r["metrics"]["r2"]  # 是 NaN
-        assert isinstance(r["warning"], str) and "常量" in r["warning"]
+        with pytest.raises(InsufficientDataError, match="R²"):
+            fit_regression(df)
 
 
 class TestMetricsAndReproducibility:
@@ -179,13 +193,10 @@ class TestMetricsAndReproducibility:
         pred = r["predictions"]
         y_true, y_pred = pred["y_true"].values, pred["y_pred"].values
         assert np.isclose(r["metrics"]["mae"], mean_absolute_error(y_true, y_pred))
-        mse = mean_squared_error(y_true, y_pred)
-        assert np.isclose(r["rmse"], np.sqrt(mse))
         assert np.isclose(r["metrics"]["r2"], r2_score(y_true, y_pred))
 
     def test_reproducible(self) -> None:
         r1 = fit_regression(_features())
         r2 = fit_regression(_features())
         pd.testing.assert_frame_equal(r1["predictions"], r2["predictions"])
-        assert r1["rmse"] == r2["rmse"]
         assert r1["metrics"] == r2["metrics"]
