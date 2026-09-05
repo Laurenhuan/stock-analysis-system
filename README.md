@@ -86,7 +86,7 @@
     cd /d D:\Codex工作空间\stock-analysis-system-role-boundaries
     python -m venv .venv
     .venv\Scripts\python.exe -m pip install -r requirements.txt
-    .venv\Scripts\python.exe -m streamlit run app.py
+    .venv\Scripts\python.exe -m streamlit run app.py --server.port 8766
 
 默认访问：
 
@@ -100,6 +100,8 @@ Windows 下可直接运行：
     scripts\run_lan.cmd
 
 脚本监听 0.0.0.0:8766 并列出本机 IPv4。同一 Wi-Fi 下分享 http://<本机IPv4>:8766/；项目介绍为 http://<本机IPv4>:8766/about.html。不要分享 127.0.0.1 或虚拟网卡地址。若无法访问，请检查启动窗口、同网条件、访客网络隔离和 Windows 防火墙专用网络权限。
+
+`.streamlit/config.toml` 只保存界面主题，不固定服务器端口。局域网脚本通过命令行使用 8766；Streamlit Community Cloud 可继续使用平台要求的健康检查端口。
 
 ## 测试
 
