@@ -27,6 +27,7 @@ from src.data.fetch import (
     _convert_tencent,
     _fetch_tencent,
     _finalize_daily,
+    _normalize_symbol,
     _symbol_with_exchange,
     fetch_market_data,
 )
@@ -68,6 +69,35 @@ def test_code_to_tx_symbol_rejects_invalid():
         _code_to_tx_symbol("830000")  # 北交所
     with pytest.raises(InvalidSymbolError):
         _code_to_tx_symbol("60051")
+
+
+# ---------------------------------------------------------------------------
+# 代码标准化（裸代码 / 带后缀 / 腾讯·新浪前缀）
+# ---------------------------------------------------------------------------
+
+def test_normalize_symbol_accepts_bare_suffixed_prefixed():
+    assert _normalize_symbol("600519") == "600519.SH"
+    assert _normalize_symbol("600519.SH") == "600519.SH"
+    assert _normalize_symbol("600519.sh") == "600519.SH"
+    assert _normalize_symbol("sh600519") == "600519.SH"
+    assert _normalize_symbol("SH600519") == "600519.SH"
+    assert _normalize_symbol("000001") == "000001.SZ"
+    assert _normalize_symbol("000001.SZ") == "000001.SZ"
+    assert _normalize_symbol("000001.sz") == "000001.SZ"
+    assert _normalize_symbol("sz000001") == "000001.SZ"
+    assert _normalize_symbol("300750") == "300750.SZ"   # 创业板
+    assert _normalize_symbol("688981") == "688981.SH"   # 科创板
+
+
+def test_normalize_symbol_rejects_invalid():
+    for bad in (
+        "", "bad", "60051", "12345", "6005196",      # 位数/字符非法
+        "600519.SS", "600519.XSHG",                   # 未知后缀
+        "800001", "830000", "920001",                 # 北交所等不支持市场
+        "000001.SH", "sz600519",                      # 前后缀与市场不匹配
+    ):
+        with pytest.raises(InvalidSymbolError):
+            _normalize_symbol(bad)
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +483,7 @@ def test_fetch_akshare_invalid_symbol_not_swallowed(monkeypatch):
 
     monkeypatch.setattr(akshare, "stock_zh_a_hist", boom)
     with pytest.raises(InvalidSymbolError):
-        fetch_market_data("600519", source="akshare")  # 缺少 .SH/.SZ 后缀
+        fetch_market_data("800001", source="akshare")  # 北交所，不支持的市场
 
 
 def test_fetch_market_data_rejects_start_after_end(monkeypatch):
@@ -466,6 +496,34 @@ def test_fetch_market_data_rejects_start_after_end(monkeypatch):
         fetch_market_data(
             "600519.SH", start_date="20250101", end_date="20240101", source="akshare"
         )
+
+
+@pytest.mark.parametrize(
+    "bad_date",
+    ["not-a-date", "2024-99-99", "2024/01/01", [], pd.NaT],
+)
+def test_fetch_market_data_rejects_invalid_date_formats(bad_date):
+    with pytest.raises(DataValidationError, match="日期"):
+        fetch_market_data(
+            "600519.SH",
+            start_date=bad_date,
+            end_date="2024-12-31",
+            source="sample",
+        )
+
+
+@pytest.mark.parametrize(
+    "valid_date",
+    ["20240102", "2024-01-02", pd.Timestamp("2024-01-02"), datetime(2024, 1, 2)],
+)
+def test_fetch_market_data_accepts_documented_date_formats(valid_date):
+    df = fetch_market_data(
+        "600519.SH",
+        start_date=valid_date,
+        end_date="2024-01-05",
+        source="sample",
+    )
+    assert len(df) == 4
 
 
 def test_online_fetch_never_writes_local_csv(monkeypatch):

@@ -10,9 +10,12 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.preprocessing import StandardScaler
 
 from src.contracts.clustering import (
@@ -212,7 +215,13 @@ def run_clustering(
 
     # ── 提取特征矩阵 ──
     # 只取 3 个特征列，转为 numpy 数组供 sklearn 使用
-    X = profiles[list(FEATURE_COLS)].values  # shape: (n_stocks, 3)
+    X = profiles[list(FEATURE_COLS)].to_numpy(dtype=float)
+    distinct_profiles = np.unique(np.round(X, decimals=12), axis=0)
+    if len(distinct_profiles) < N_CLUSTERS:
+        raise InsufficientDataError(
+            f"股票数量为 {len(profiles)}，但仅有 {len(distinct_profiles)} 个"
+            f"可区分画像，不足以形成 {N_CLUSTERS} 个簇"
+        )
 
     # ── 标准化 ──
     # 为什么要做标准化？因为 3 个特征的量纲不同：
@@ -228,7 +237,19 @@ def run_clustering(
     # n_init=10 表示用不同初始中心跑 10 次，取最好的结果
     # random_state=42 保证每次运行结果相同（可复现）
     kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=random_state, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ConvergenceWarning)
+            labels = kmeans.fit_predict(X_scaled)
+    except ConvergenceWarning as exc:
+        raise InsufficientDataError(
+            f"有效股票画像无法稳定形成 {N_CLUSTERS} 个不同簇"
+        ) from exc
+    if len(np.unique(labels)) != N_CLUSTERS:
+        raise InsufficientDataError(
+            f"聚类结果仅形成 {len(np.unique(labels))} 个有效簇，"
+            f"少于固定要求的 {N_CLUSTERS} 个"
+        )
 
     # ── 中心点还原到原始尺度 ──
     # 聚类中心是在标准化后的空间计算的，需要还原到原始尺度才有实际含义

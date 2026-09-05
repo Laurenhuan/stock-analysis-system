@@ -14,11 +14,16 @@ from src.visualization.charts import (
     _COLOR_SEQUENCE,
     plot_actual_vs_predicted,
     plot_candlestick,
+    plot_cluster_centers,
+    plot_cluster_parallel_coordinates,
+    plot_cluster_scatter,
     plot_confusion_matrix,
     plot_correlation_matrix,
     plot_price,
+    plot_return_distribution,
     plot_returns_comparison,
     plot_risk_comparison,
+    plot_rolling_volatility,
 )
 
 
@@ -135,9 +140,10 @@ def test_plot_price_symbols_requires_symbol_column(single_price_df):
 
 def test_plot_price_ten_symbols_traces():
     symbols = [f"S{i:03d}" for i in range(10)]
+    dates = pd.date_range("2024-01-02", periods=2)
     rows = [
         {
-            "trade_date": pd.Timestamp("2024-01-02") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "close": 100.0 + i + d,
         }
@@ -415,9 +421,10 @@ def test_chart_functions_do_not_mutate_input(
 
 def test_plot_price_twenty_symbols_traces():
     symbols = [f"STK{i:02d}" for i in range(20)]
+    dates = pd.date_range("2021-06-01", periods=3)
     rows = [
         {
-            "trade_date": pd.Timestamp("2021-06-01") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "close": 100.0 + i + d,
         }
@@ -431,9 +438,10 @@ def test_plot_price_twenty_symbols_traces():
 
 def test_plot_returns_comparison_fifteen_symbols_traces():
     symbols = [f"STK{i:02d}" for i in range(15)]
+    dates = pd.date_range("2020-01-06", periods=4)
     rows = [
         {
-            "trade_date": pd.Timestamp("2020-01-06") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "cumulative_return": 0.01 * i + 0.002 * d,
         }
@@ -443,3 +451,270 @@ def test_plot_returns_comparison_fifteen_symbols_traces():
     fig = plot_returns_comparison(pd.DataFrame(rows))
     assert len(fig.data) == 15
     assert [t.name for t in fig.data] == symbols
+
+
+# --- plot_return_distribution ------------------------------------------------
+
+def test_plot_return_distribution_figure_and_traces():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"] * 2),
+        "symbol": ["A", "A", "B", "B"],
+        "return": [0.01, -0.01, 0.02, 0.03],
+    })
+    fig = plot_return_distribution(df)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2  # 每股一个箱线
+    assert {t.name for t in fig.data} == {"A", "B"}
+
+
+def test_plot_return_distribution_symbols_selection():
+    df = pd.DataFrame({"symbol": ["A", "B"], "return": [0.01, 0.02]})
+    fig = plot_return_distribution(df, symbols=["B"])
+    assert len(fig.data) == 1
+    assert fig.data[0].name == "B"
+
+
+def test_plot_return_distribution_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_return_distribution(pd.DataFrame({"symbol": ["A"], "close": [1.0]}))
+
+
+# --- plot_rolling_volatility -------------------------------------------------
+
+def test_plot_rolling_volatility_figure_and_traces():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"] * 2),
+        "symbol": ["A", "A", "B", "B"],
+        "volatility_20d": [np.nan, 0.08, np.nan, 0.12],
+    })
+    fig = plot_rolling_volatility(df)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2
+
+
+def test_plot_rolling_volatility_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_rolling_volatility(pd.DataFrame({
+            "symbol": ["A"], "trade_date": [pd.Timestamp("2024-01-02")],
+        }))
+
+
+def test_plot_rolling_volatility_symbols_selection():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "symbol": ["A", "A"],
+        "volatility_20d": [np.nan, 0.08],
+    })
+    fig = plot_rolling_volatility(df, symbols=["A"])
+    assert len(fig.data) == 1
+
+
+def test_new_chart_functions_do_not_mutate_input():
+    df = pd.DataFrame({
+        "trade_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "symbol": ["A", "A"],
+        "return": [0.01, -0.01],
+        "volatility_20d": [np.nan, 0.08],
+    })
+    before = df.copy(deep=True)
+    plot_return_distribution(df)
+    plot_rolling_volatility(df)
+    pd.testing.assert_frame_equal(df, before)
+
+
+# --- plot_cluster_scatter ----------------------------------------------------
+
+def _profiles_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "symbol": ["A", "B", "C", "D", "E"],
+            "mean_return": [0.05, 0.01, -0.02, 0.04, -0.03],
+            "volatility": [0.10, 0.20, 0.15, 0.12, 0.18],
+            "max_drawdown": [-0.05, -0.30, -0.15, -0.08, -0.25],
+            "cluster": [0, 1, 2, 0, 2],
+        }
+    )
+
+
+def _centers_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "cluster": [0, 1, 2],
+            "mean_return": [0.045, 0.01, -0.025],
+            "volatility": [0.11, 0.20, 0.165],
+            "max_drawdown": [-0.065, -0.30, -0.20],
+        }
+    )
+
+
+def test_plot_cluster_scatter_figure_and_traces():
+    fig = plot_cluster_scatter(_profiles_df())
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 3  # 每股一个箱线 → 每簇一条散点
+    assert {t.name for t in fig.data} == {"簇 0", "簇 1", "簇 2"}
+
+
+def test_plot_cluster_scatter_groups_points_by_cluster():
+    fig = plot_cluster_scatter(_profiles_df())
+    by_name = {t.name: t for t in fig.data}
+    # cluster 0 = A、D；默认 x=volatility、y=mean_return。
+    assert list(by_name["簇 0"].x) == [0.10, 0.12]
+    assert list(by_name["簇 0"].y) == [0.05, 0.04]
+    assert list(by_name["簇 0"].text) == ["A", "D"]
+
+
+def test_plot_cluster_scatter_distinct_cluster_colors():
+    fig = plot_cluster_scatter(_profiles_df())
+    colors = [t.marker.color for t in fig.data]
+    assert len(set(colors)) == 3
+
+
+def test_plot_cluster_scatter_with_centers():
+    fig = plot_cluster_scatter(_profiles_df(), cluster_centers=_centers_df())
+    center = next(t for t in fig.data if t.name == "聚类中心")
+    assert list(center.x) == [0.11, 0.20, 0.165]
+    assert list(center.y) == [0.045, 0.01, -0.025]
+    assert center.marker.symbol == "x"
+    # 中心点颜色与对应簇的散点颜色一致。
+    point_color = {t.name: t.marker.color for t in fig.data if t.name != "聚类中心"}
+    assert list(center.marker.color) == [
+        point_color["簇 0"], point_color["簇 1"], point_color["簇 2"],
+    ]
+
+
+def test_plot_cluster_scatter_custom_axes():
+    fig = plot_cluster_scatter(_profiles_df(), x="max_drawdown", y="mean_return")
+    assert fig.layout.xaxis.title.text == "最大回撤"
+    assert fig.layout.yaxis.title.text == "平均日收益率"
+    by_name = {t.name: t for t in fig.data}
+    assert list(by_name["簇 0"].x) == [-0.05, -0.08]
+
+
+def test_plot_cluster_scatter_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_cluster_scatter(_profiles_df().drop(columns=["cluster"]))
+
+
+def test_plot_cluster_scatter_centers_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_cluster_scatter(
+            _profiles_df(), cluster_centers=_centers_df().drop(columns=["volatility"])
+        )
+
+
+def test_plot_cluster_scatter_invalid_axis():
+    with pytest.raises(DataValidationError):
+        plot_cluster_scatter(_profiles_df(), x="bogus")
+    with pytest.raises(DataValidationError):
+        plot_cluster_scatter(_profiles_df(), x="volatility", y="volatility")
+
+
+def test_plot_cluster_scatter_empty():
+    with pytest.raises(NoDataError):
+        plot_cluster_scatter(pd.DataFrame())
+
+
+def test_plot_cluster_scatter_does_not_mutate_input():
+    profiles = _profiles_df()
+    centers = _centers_df()
+    p_before = profiles.copy(deep=True)
+    c_before = centers.copy(deep=True)
+    plot_cluster_scatter(profiles, cluster_centers=centers)
+    pd.testing.assert_frame_equal(profiles, p_before)
+    pd.testing.assert_frame_equal(centers, c_before)
+
+
+# --- plot_cluster_centers ----------------------------------------------------
+
+def test_plot_cluster_centers_figure_and_data():
+    fig = plot_cluster_centers(_centers_df())
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 3  # 每簇一条
+    assert [t.name for t in fig.data] == ["簇 0", "簇 1", "簇 2"]
+    assert fig.layout.barmode == "group"
+    expected_x = ["平均日收益率", "波动率", "最大回撤"]
+    for t in fig.data:
+        assert list(t.x) == expected_x
+    # 簇 0 中心：mean_return=0.045, volatility=0.11, max_drawdown=-0.065
+    assert list(fig.data[0].y) == [0.045, 0.11, -0.065]
+
+
+def test_plot_cluster_centers_distinct_colors():
+    fig = plot_cluster_centers(_centers_df())
+    colors = [t.marker.color for t in fig.data]
+    assert len(set(colors)) == 3
+
+
+def test_plot_cluster_centers_colors_match_scatter():
+    scatter = plot_cluster_scatter(_profiles_df())
+    bars = plot_cluster_centers(_centers_df())
+    scatter_color = {
+        t.name: t.marker.color for t in scatter.data if t.name != "聚类中心"
+    }
+    bar_color = {t.name: t.marker.color for t in bars.data}
+    for cid in ("簇 0", "簇 1", "簇 2"):
+        assert scatter_color[cid] == bar_color[cid]
+
+
+def test_plot_cluster_centers_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_cluster_centers(_centers_df().drop(columns=["volatility"]))
+
+
+def test_plot_cluster_centers_empty():
+    with pytest.raises(NoDataError):
+        plot_cluster_centers(pd.DataFrame())
+
+
+def test_plot_cluster_centers_does_not_mutate_input():
+    centers = _centers_df()
+    before = centers.copy(deep=True)
+    plot_cluster_centers(centers)
+    pd.testing.assert_frame_equal(centers, before)
+
+
+# --- plot_cluster_parallel_coordinates ---------------------------------------
+
+def test_plot_cluster_parallel_coordinates_figure_and_dimensions():
+    fig = plot_cluster_parallel_coordinates(_profiles_df())
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 1
+    assert isinstance(fig.data[0], go.Parcoords)
+    dims = fig.data[0].dimensions
+    assert [d.label for d in dims] == ["平均日收益率", "波动率", "最大回撤"]
+    assert list(dims[0].values) == [0.05, 0.01, -0.02, 0.04, -0.03]
+
+
+def test_plot_cluster_parallel_coordinates_colors_by_cluster():
+    fig = plot_cluster_parallel_coordinates(_profiles_df())
+    trace = fig.data[0]
+    # line.color 是 0..k-1 的簇索引，逐股映射到离散 colorscale。
+    assert list(trace.line.color) == [0, 1, 2, 0, 2]
+    scatter = plot_cluster_scatter(_profiles_df())
+    scatter_color = {
+        t.name: t.marker.color for t in scatter.data if t.name != "聚类中心"
+    }
+    actual = [c for _, c in trace.line.colorscale]
+    assert actual == [
+        scatter_color["簇 0"], scatter_color["簇 1"], scatter_color["簇 2"],
+    ]
+    # 颜色条（图例）把簇号标出来，用户能对应「哪色=哪簇」。
+    assert list(trace.line.colorbar.tickvals) == [0, 1, 2]
+    assert list(trace.line.colorbar.ticktext) == ["簇 0", "簇 1", "簇 2"]
+
+
+def test_plot_cluster_parallel_coordinates_missing_column():
+    with pytest.raises(DataValidationError):
+        plot_cluster_parallel_coordinates(_profiles_df().drop(columns=["cluster"]))
+
+
+def test_plot_cluster_parallel_coordinates_empty():
+    with pytest.raises(NoDataError):
+        plot_cluster_parallel_coordinates(pd.DataFrame())
+
+
+def test_plot_cluster_parallel_coordinates_does_not_mutate_input():
+    profiles = _profiles_df()
+    before = profiles.copy(deep=True)
+    plot_cluster_parallel_coordinates(profiles)
+    pd.testing.assert_frame_equal(profiles, before)

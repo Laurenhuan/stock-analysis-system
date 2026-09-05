@@ -181,3 +181,67 @@ def missing_values_summary(df: DataFrame) -> DataFrame:
     return DataFrame(
         {"missing_count": df.isna().sum(), "missing_ratio": df.isna().mean()}
     )
+
+
+def return_distribution_summary(df: DataFrame) -> DataFrame:
+    """Per-symbol daily-return distribution shape.
+
+    Returns columns ``symbol``, ``skewness``, ``kurtosis`` and ``n``:
+
+    - ``skewness`` — sample skewness (pandas, adjusted Fisher-Pearson), NaN when
+      fewer than 3 valid returns;
+    - ``kurtosis``  — *excess* kurtosis (Fisher, normal == 0), NaN when fewer
+      than 4 valid returns; positive means heavier tails than a normal;
+    - ``n``          — number of valid (non-NaN) daily returns used.
+    """
+    _require_columns(df, ("symbol", "return"), label="return_distribution_summary")
+    rows = []
+    for symbol, group in df.groupby("symbol", sort=True):
+        ret = group["return"].dropna()
+        n = int(len(ret))
+        rows.append(
+            {
+                "symbol": symbol,
+                "skewness": float(ret.skew()) if n >= 3 else np.nan,
+                "kurtosis": float(ret.kurtosis()) if n >= 4 else np.nan,
+                "n": n,
+            }
+        )
+    return DataFrame(rows)
+
+
+def extreme_returns_summary(df: DataFrame) -> DataFrame:
+    """Per-symbol largest single-day gain and loss with their trading dates.
+
+    Returns columns ``symbol``, ``max_return``, ``max_return_date``,
+    ``min_return`` and ``min_return_date``. Days are located on the
+    ``trade_date``-sorted series within each symbol, so the result is stable
+    under row reshuffling; symbols with no valid return are reported as NaN.
+    """
+    _require_columns(
+        df, ("symbol", "trade_date", "return"), label="extreme_returns_summary"
+    )
+    rows = []
+    for symbol, group in df.groupby("symbol", sort=True):
+        valid = group.sort_values("trade_date").dropna(subset=["return"])
+        if valid.empty:
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "max_return": np.nan, "max_return_date": pd.NaT,
+                    "min_return": np.nan, "min_return_date": pd.NaT,
+                }
+            )
+            continue
+        i_max = valid["return"].idxmax()
+        i_min = valid["return"].idxmin()
+        rows.append(
+            {
+                "symbol": symbol,
+                "max_return": valid.loc[i_max, "return"],
+                "max_return_date": valid.loc[i_max, "trade_date"],
+                "min_return": valid.loc[i_min, "return"],
+                "min_return_date": valid.loc[i_min, "trade_date"],
+            }
+        )
+    return DataFrame(rows)

@@ -7,7 +7,7 @@
 ## 2. 依赖方向与公共入口
 
 ```text
-Streamlit (app.py / pages)
+Streamlit (app.py / app_pages)
     -> src/services
     -> src/data | src/analysis | src/models | src/visualization
 ```

@@ -1,0 +1,41 @@
+# D4 Claude Code 对话记录
+# 日期：2026-09-04
+# 角色：Role 4 - 监督学习分类
+
+## 对话摘要
+
+### 1. 动态单股输入任务
+- 收到新任务：实现 `feat/classification-dynamic-range` 分支
+- 需求：支持任意股票数据 + 任意日期范围 + 样本元数据 + 特征重要性
+- 约束：向后兼容，不破坏现有调用方
+
+### 2. 接口变更请求 CR-001
+- 向 ClassificationResult 添加 5 个可选字段
+- 使用 `NotRequired` 保持向后兼容
+- 已写入 PR 描述，等待 Role 1 和 Role 6 签字
+
+### 3. 实现内容
+- `run_classification()` 新增 `start_date`/`end_date` 参数
+- 返回值新增：n_raw_trading_days, n_effective_samples, n_train_samples, n_test_samples, feature_importance
+- 新增边界检查：训练集单类别 → InsufficientDataError
+
+### 4. 测试编写
+- 新增 11 个验收测试覆盖动态输入场景
+- 更新 2 个泄漏测试验证元数据一致性
+- 更新契约测试适配新结构
+
+### 5. 遇到的问题
+- Python 3.10 不支持 `typing.NotRequired`，改用 `typing_extensions`
+- `total=False` 导致所有字段可选，改用 `NotRequired` 保持核心字段 required
+- 单类别测试数据构造需确保全量单调递增
+
+## 关键决策
+1. 新增字段使用 `NotRequired` 而非 `total=False`，保持契约稳定性
+2. 日期过滤在特征工程之前执行，减少无效计算
+3. 单类别检查在 train/test split 之后、model.fit 之前执行
+4. 特征重要性直接从 `model.feature_importances_` 提取，不额外计算
+
+## 遇到的问题
+1. NotRequired 导入失败：改用 typing_extensions
+2. 契约测试 required_keys 断言失败：改用 issubset 检查
+3. 单类别测试未触发错误：改用全量单调递增价格数据

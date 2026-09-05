@@ -11,6 +11,11 @@ from src.data.fetch import _REALTIME_COLUMNS, fetch_realtime_quotes
 from src.utils.exceptions import InvalidSymbolError, NoDataError
 
 
+@pytest.fixture(autouse=True)
+def _disable_retry_sleep(monkeypatch):
+    monkeypatch.setattr("src.data.fetch.time.sleep", lambda *_args, **_kwargs: None)
+
+
 def _em_spot_frame() -> pd.DataFrame:
     """AkShare ``stock_zh_a_spot_em`` 输出形状（中文列名，成交量单位=手）。"""
     return pd.DataFrame({
@@ -80,6 +85,41 @@ def test_realtime_eastmoney_success(monkeypatch):
     assert "fetched_at" in df.attrs
 
 
+def test_realtime_retries_transient_eastmoney_failure(monkeypatch):
+    import akshare
+
+    calls = {"count": 0}
+
+    def flaky():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("temporary timeout")
+        return _em_spot_frame()
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", flaky)
+
+    df = fetch_realtime_quotes("600519.SH")
+
+    assert calls["count"] == 2
+    assert df.attrs["provider"] == "eastmoney"
+
+
+def test_realtime_programming_error_is_not_retried(monkeypatch):
+    import akshare
+
+    calls = {"count": 0}
+
+    def broken():
+        calls["count"] += 1
+        raise TypeError("schema adapter bug")
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", broken)
+
+    with pytest.raises(TypeError, match="schema adapter bug"):
+        fetch_realtime_quotes("600519.SH")
+    assert calls["count"] == 1
+
+
 def test_realtime_falls_back_to_sina(monkeypatch):
     import akshare
 
@@ -141,18 +181,30 @@ def test_realtime_both_providers_fail_raises(monkeypatch):
 def test_realtime_symbol_not_found_in_either_provider(monkeypatch):
     import akshare
 
-    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: _em_spot_frame())  # 无 999999
-    monkeypatch.setattr(akshare, "stock_zh_a_spot", lambda: _sina_spot_frame())   # 无 999999
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: _em_spot_frame())  # 无 601318
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", lambda: _sina_spot_frame())   # 无 601318
 
     with pytest.raises(NoDataError):
-        fetch_realtime_quotes("999999.SH")
+        fetch_realtime_quotes("601318.SH")
 
 
 def test_realtime_invalid_symbol_rejected(monkeypatch):
     with pytest.raises(InvalidSymbolError):
-        fetch_realtime_quotes("600519")  # 缺少后缀
+        fetch_realtime_quotes("600519.SS")  # 未知交易所后缀
     with pytest.raises(InvalidSymbolError):
-        fetch_realtime_quotes("sh600519")
+        fetch_realtime_quotes("800001")     # 北交所，不支持的市场
+    with pytest.raises(InvalidSymbolError):
+        fetch_realtime_quotes("bad")        # 非 6 位数字
+
+
+def test_realtime_accepts_bare_symbol(monkeypatch):
+    import akshare
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", lambda: _em_spot_frame())
+
+    df = fetch_realtime_quotes("600519")  # 裸代码被标准化为 600519.SH
+    assert len(df) == 1
+    assert df.iloc[0]["symbol"] == "600519.SH"
 
 
 def test_realtime_never_writes_local_csv(monkeypatch):

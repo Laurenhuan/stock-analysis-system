@@ -217,6 +217,59 @@ def plot_risk_comparison(
     return _apply_theme(fig)
 
 
+def plot_return_distribution(
+    df: DataFrame,
+    *,
+    symbols: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """Box plot of daily returns, one box per symbol.
+
+    Each box shows the median, quartiles and outlying tail days of a stock's
+    daily ``return`` — the standard EDA view of return-distribution shape.
+    ``symbols`` restricts which symbols are drawn; by default every symbol is
+    drawn.
+    """
+    _check_input(df, ("symbol", "return"), label="plot_return_distribution")
+    if symbols is not None:
+        df = _filter_symbols(df, symbols, label="plot_return_distribution")
+    fig = go.Figure()
+    for symbol, group in df.groupby("symbol"):
+        fig.add_trace(go.Box(y=group["return"], name=str(symbol)))
+    fig.update_layout(title=title, xaxis_title="股票", yaxis_title="日收益率")
+    return _apply_theme(fig)
+
+
+def plot_rolling_volatility(
+    df: DataFrame,
+    *,
+    symbols: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """Line chart of the rolling 20-day volatility over time, per symbol.
+
+    Expects Role 2's ``volatility_20d`` field (rolling sample std of daily
+    returns, ddof=1, not annualized). Leading NaNs before the window matures are
+    left as gaps, not filled. ``symbols`` restricts which symbols are drawn.
+    """
+    _check_input(
+        df, ("trade_date", "symbol", "volatility_20d"),
+        label="plot_rolling_volatility",
+    )
+    if symbols is not None:
+        df = _filter_symbols(df, symbols, label="plot_rolling_volatility")
+    fig = go.Figure()
+    for symbol, group in df.groupby("symbol"):
+        fig.add_trace(
+            go.Scatter(
+                x=group["trade_date"], y=group["volatility_20d"],
+                mode="lines", name=str(symbol),
+            )
+        )
+    fig.update_layout(title=title, xaxis_title="交易日期", yaxis_title="20 日波动率")
+    return _apply_theme(fig)
+
+
 def plot_correlation_matrix(
     corr, *, title: str | None = None, decimals: int = 2
 ) -> Figure:
@@ -317,4 +370,241 @@ def plot_actual_vs_predicted(df: DataFrame, *, title: str | None = None) -> Figu
         )
     )
     fig.update_layout(title=title, xaxis_title="实际值 y_true", yaxis_title="预测值 y_pred")
+    return _apply_theme(fig)
+
+
+# Clustering profile features and their Chinese axis labels, shared by the
+# cluster scatter plot below. These mirror the Clustering Contract's three
+# Stock Profile features (mean_return / volatility / max_drawdown).
+_CLUSTER_FEATURES = ("mean_return", "volatility", "max_drawdown")
+
+_FEATURE_AXIS_LABELS = {
+    "mean_return": "平均日收益率",
+    "volatility": "波动率",
+    "max_drawdown": "最大回撤",
+}
+
+
+def _cluster_label(cluster_id) -> str:
+    """Format a cluster id as a neutral ``簇 N`` label.
+
+    Cluster ids carry no fixed financial meaning (Clustering Contract §4), so
+    the label only states the id; the reader interprets a cluster through its
+    centre and members rather than a preset judgement.
+    """
+    try:
+        num = float(cluster_id)
+        if num.is_integer():
+            return f"簇 {int(num)}"
+    except (TypeError, ValueError):
+        pass
+    return f"簇 {cluster_id}"
+
+
+def plot_cluster_scatter(
+    profiles: DataFrame,
+    *,
+    cluster_centers: DataFrame | None = None,
+    x: str = "volatility",
+    y: str = "mean_return",
+    title: str | None = None,
+) -> Figure:
+    """2D scatter of the clustered stock profiles, coloured by cluster.
+
+    Expects Role 5's ``profiles`` output — a DataFrame holding ``symbol``, the
+    three profile features (``mean_return``, ``volatility``, ``max_drawdown``)
+    and the model-private ``cluster`` column. ``x``/``y`` pick which two of the
+    three features form the axes (default: the classic risk/return plane, with
+    volatility on x and mean return on y). Each point is one stock, coloured by
+    its cluster.
+
+    When ``cluster_centers`` (Role 5's ``cluster_centers`` output) is supplied,
+    every cluster's centre is overlaid as a larger ``x`` marker in the matching
+    colour so the reader can see where each group sits.
+    """
+    required = ("symbol", "mean_return", "volatility", "max_drawdown", "cluster")
+    _check_input(profiles, required, label="plot_cluster_scatter")
+    if x not in _CLUSTER_FEATURES or y not in _CLUSTER_FEATURES:
+        raise DataValidationError(
+            "plot_cluster_scatter 的 x/y 必须属于聚类特征 "
+            f"{list(_CLUSTER_FEATURES)}"
+        )
+    if x == y:
+        raise DataValidationError("plot_cluster_scatter 的 x 与 y 不能相同")
+
+    # Assign one stable colour per cluster id (from the union of profiles and
+    # centers) so points and their centre share the same colour.
+    cluster_ids = set(profiles["cluster"].dropna())
+    if cluster_centers is not None:
+        _check_input(
+            cluster_centers, ("cluster", x, y),
+            label="plot_cluster_scatter 的 cluster_centers",
+        )
+        cluster_ids |= set(cluster_centers["cluster"].dropna())
+    color_by_cluster = {
+        cid: _COLOR_SEQUENCE[i % len(_COLOR_SEQUENCE)]
+        for i, cid in enumerate(sorted(cluster_ids))
+    }
+
+    fig = go.Figure()
+
+    for cluster_id, group in profiles.groupby("cluster", sort=True):
+        fig.add_trace(
+            go.Scatter(
+                x=group[x],
+                y=group[y],
+                mode="markers",
+                name=_cluster_label(cluster_id),
+                text=group["symbol"].astype(str),
+                marker=dict(
+                    size=9,
+                    color=color_by_cluster.get(cluster_id, _COLOR_SEQUENCE[0]),
+                    opacity=0.75,
+                ),
+            )
+        )
+
+    if cluster_centers is not None:
+        center_colors = [
+            color_by_cluster.get(cid, _COLOR_SEQUENCE[0])
+            for cid in cluster_centers["cluster"]
+        ]
+        fig.add_trace(
+            go.Scatter(
+                x=cluster_centers[x],
+                y=cluster_centers[y],
+                mode="markers",
+                name="聚类中心",
+                text=[_cluster_label(c) for c in cluster_centers["cluster"]],
+                marker=dict(
+                    size=16,
+                    symbol="x",
+                    color=center_colors,
+                    line=dict(width=2, color="#333333"),
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=_FEATURE_AXIS_LABELS[x],
+        yaxis_title=_FEATURE_AXIS_LABELS[y],
+    )
+    _apply_theme(fig)
+    # 散点图逐点悬停更自然，覆盖主题默认的按 x 轴统一悬停。
+    fig.update_layout(hovermode="closest")
+    return fig
+
+
+def plot_cluster_centers(
+    cluster_centers: DataFrame,
+    *,
+    title: str | None = None,
+) -> Figure:
+    """Grouped bar chart comparing every cluster's centre across the features.
+
+    Expects Role 5's ``cluster_centers`` output — a DataFrame with ``cluster``
+    plus the three profile features (``mean_return``, ``volatility``,
+    ``max_drawdown``). Each feature is one x-category; one bar per cluster per
+    feature, coloured by cluster so it lines up with ``plot_cluster_scatter``.
+
+    ``max_drawdown`` is ``<= 0``, so its bars extend downward — a shorter bar
+    means a shallower (milder) drawdown. Cluster numbers carry no fixed
+    financial meaning, so the legend only states the id.
+    """
+    required = ("cluster", "mean_return", "volatility", "max_drawdown")
+    _check_input(cluster_centers, required, label="plot_cluster_centers")
+
+    cluster_ids = sorted(set(cluster_centers["cluster"].dropna()))
+    color_by_cluster = {
+        cid: _COLOR_SEQUENCE[i % len(_COLOR_SEQUENCE)]
+        for i, cid in enumerate(cluster_ids)
+    }
+    feature_labels = [_FEATURE_AXIS_LABELS[f] for f in _CLUSTER_FEATURES]
+
+    fig = go.Figure()
+    for _, row in cluster_centers.iterrows():
+        cid = row["cluster"]
+        fig.add_trace(
+            go.Bar(
+                x=feature_labels,
+                y=[row[f] for f in _CLUSTER_FEATURES],
+                name=_cluster_label(cid),
+                marker_color=color_by_cluster.get(cid, _COLOR_SEQUENCE[0]),
+            )
+        )
+
+    fig.update_layout(
+        title=title,
+        barmode="group",
+        xaxis_title="聚类特征",
+        yaxis_title="簇中心值",
+    )
+    return _apply_theme(fig)
+
+
+def plot_cluster_parallel_coordinates(
+    profiles: DataFrame,
+    *,
+    title: str | None = None,
+) -> Figure:
+    """Parallel-coordinates view of the clustered stock profiles.
+
+    Each stock is one polyline crossing the three feature axes (mean return,
+    volatility, max drawdown); lines are coloured by cluster, so a cluster reads
+    as a bundle of same-coloured lines. This shows every stock's complete
+    profile at once — the scatter only shows two of three features, and the
+    centre bars aggregate instead of showing individual stocks.
+    """
+    required = ("symbol", "mean_return", "volatility", "max_drawdown", "cluster")
+    _check_input(profiles, required, label="plot_cluster_parallel_coordinates")
+
+    cluster_ids = sorted(set(profiles["cluster"].dropna()))
+    k = len(cluster_ids)
+    color_by_cluster = {
+        cid: _COLOR_SEQUENCE[i % len(_COLOR_SEQUENCE)]
+        for i, cid in enumerate(cluster_ids)
+    }
+
+    # 用「簇索引 0..k-1 + 离散 colorscale」给每条线着色。这样每个簇精确对应
+    # 一个纯色，避免把字符串色值交给 Parcoords 后被当作连续色阶插值混色。
+    if k == 1:
+        line_values = [0] * len(profiles)
+        colorscale = [
+            [0.0, color_by_cluster[cluster_ids[0]]],
+            [1.0, color_by_cluster[cluster_ids[0]]],
+        ]
+        cmax = 1.0
+    else:
+        index_by_cluster = {cid: i for i, cid in enumerate(cluster_ids)}
+        line_values = [index_by_cluster.get(c, 0) for c in profiles["cluster"]]
+        colorscale = [
+            [i / (k - 1), color_by_cluster[cid]]
+            for i, cid in enumerate(cluster_ids)
+        ]
+        cmax = float(k - 1)
+
+    dimensions = [
+        dict(label=_FEATURE_AXIS_LABELS[f], values=profiles[f].tolist())
+        for f in _CLUSTER_FEATURES
+    ]
+
+    fig = go.Figure(
+        go.Parcoords(
+            line=dict(
+                color=line_values,
+                colorscale=colorscale,
+                cmin=0,
+                cmax=cmax,
+                showscale=True,
+                colorbar=dict(
+                    tickvals=list(range(k)),
+                    ticktext=[_cluster_label(c) for c in cluster_ids],
+                    title="簇",
+                ),
+            ),
+            dimensions=dimensions,
+        )
+    )
+    fig.update_layout(title=title)
     return _apply_theme(fig)

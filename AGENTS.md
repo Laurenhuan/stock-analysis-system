@@ -6,7 +6,7 @@ Every coding agent must read this file, `docs/role_boundaries.md` and
 ## Architecture direction
 
 ```text
-Streamlit (`app.py`, `pages/`)
+Streamlit (`app.py`, `app_pages/`)
     -> Service Layer (`src/services/`)
     -> Domain Modules (`src/data/`, `src/analysis/`, `src/models/`,
        `src/visualization/`)
@@ -19,7 +19,7 @@ of depending on domain-module internals.
 
 | Role | Primary responsibility and paths |
 | --- | --- |
-| Role 1 | Architecture and application integration: `app.py`, `pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, repository governance and final integration |
+| Role 1 | Architecture and application integration: `app.py`, `app_pages/`, `src/services/`, `src/contracts/`, `src/utils/`, `tests/integration/`, repository governance and final integration |
 | Role 2 | Financial data engineering: `src/data/`, data unit tests and coordinated Sample Data |
 | Role 3 | Financial analysis and visualization: `src/analysis/`, `src/visualization/` and matching unit tests |
 | Role 4 | Decision Tree classification: `src/models/supervised/classification.py` and classification/leakage tests |

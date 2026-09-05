@@ -75,9 +75,6 @@ from src.utils.exceptions import DataValidationError, InvalidSymbolError, NoData
 
 logger = logging.getLogger(__name__)
 
-# 6-digit code + exchange suffix, e.g. 600519.SH / 000001.SZ.
-_SYMBOL_RE = re.compile(r"^\d{6}\.(SH|SZ)$")
-
 _SAMPLE_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "sample" / "sample_daily.csv"
 )
@@ -133,6 +130,11 @@ _TENCENT_MAX_RETRIES = 1
 # 未传起始日期时，官方 stock_zh_a_hist_tx 按年逐段请求；回看窗口过大会导致请求量
 # 膨胀。这里限制默认回看年数，作为请求数量保护。
 _TENCENT_DEFAULT_LOOKBACK_YEARS = 2
+
+_REALTIME_MAX_RETRIES = 1
+_REALTIME_RETRY_BACKOFF_SECONDS = 0.25
+
+_STOCK_UNIVERSE_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 # provider 名 → daily/realtime ``data_source`` 取值。
 _AKSHARE_SOURCE_BY_PROVIDER = {
@@ -214,9 +216,7 @@ def fetch_market_data(
     if source not in _VALID_SOURCES:
         raise ValueError(f"source 必须是 {_VALID_SOURCES} 之一，收到 {source!r}")
 
-    symbols = _normalize_symbols(symbols)
-    for symbol in symbols:
-        _validate_symbol(symbol)  # InvalidSymbolError must always propagate.
+    symbols = _normalize_symbols(symbols)  # InvalidSymbolError propagates here
 
     token = token or os.getenv("TUSHARE_TOKEN")
     start = _to_yyyymmdd(start_date)
@@ -259,29 +259,79 @@ def fetch_market_data(
 
 
 def _normalize_symbols(symbols: str | Iterable[str]) -> list[str]:
+    """把单个/多个证券代码统一成规范形式 ``600519.SH`` / ``000001.SZ``。"""
     if isinstance(symbols, str):
         symbols = [symbols]
-    result = [s for s in symbols]
+    result = [_normalize_symbol(s) for s in symbols]
     if not result:
         raise InvalidSymbolError("至少需要提供一个证券代码")
     return result
 
 
-def _validate_symbol(symbol: str) -> None:
-    if not isinstance(symbol, str) or not _SYMBOL_RE.fullmatch(symbol):
+def _normalize_symbol(symbol: str) -> str:
+    """标准化单个证券代码 → 规范形式 ``600519.SH`` / ``000001.SZ``。
+
+    接受裸 6 位代码（``600519``）、带交易所后缀（``600519.SH``，大小写不敏感）、
+    腾讯/新浪前缀（``sh600519``）。市场由 6 位代码首数字判定（6→沪、0/3→深），
+    不支持的市场（北交所 4/8/92 等）抛 ``InvalidSymbolError``，绝不猜测。
+    """
+    if not isinstance(symbol, str):
+        raise InvalidSymbolError(f"证券代码必须是字符串，收到 {symbol!r}")
+    s = symbol.strip()
+
+    # 腾讯/新浪前缀：sh600519 / sz000001（大小写不敏感）
+    m = re.fullmatch(r"(?i)(sh|sz)(\d{6})", s)
+    if m:
+        code, affix = m.group(2), m.group(1).lower()
+    else:
+        # 带后缀：600519.SH / 000001.sz
+        m = re.fullmatch(r"(?i)(\d{6})\.(sh|sz)", s)
+        if m:
+            code, affix = m.group(1), m.group(2).lower()
+        elif re.fullmatch(r"\d{6}", s):
+            return _symbol_with_exchange(s)  # 裸 6 位代码
+        else:
+            raise InvalidSymbolError(
+                f"无效证券代码：{symbol!r}（应为 6 位数字，可带 .SH/.SZ 后缀或 sh/sz 前缀，"
+                f"如 600519 或 600519.SH）"
+            )
+
+    canonical = _symbol_with_exchange(code)  # 按代码首数字判市场，不支持抛错
+    expected = "sh" if canonical.endswith(".SH") else "sz"
+    if affix != expected:
         raise InvalidSymbolError(
-            f"无效证券代码：{symbol!r}（应为 6 位数字 + .SH/.SZ，如 600519.SH）"
+            f"证券代码与交易所不匹配：{symbol!r}（{code} 属于 {expected.upper()}）"
         )
+    return canonical
 
 
 def _to_yyyymmdd(value) -> str:
     if value is None:
         return ""
-    if isinstance(value, pd.Timestamp):
-        return value.strftime("%Y%m%d")
-    if isinstance(value, (datetime, date)):
-        return value.strftime("%Y%m%d")
-    return str(value).strip().replace("-", "").replace("/", "")
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        timestamp = pd.Timestamp(value)
+    elif isinstance(value, str):
+        raw = value.strip()
+        if re.fullmatch(r"\d{8}", raw):
+            date_format = "%Y%m%d"
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            date_format = "%Y-%m-%d"
+        else:
+            raise DataValidationError(
+                "日期必须是 date/datetime/Timestamp，或 YYYYMMDD、YYYY-MM-DD 字符串"
+            )
+        try:
+            timestamp = pd.to_datetime(raw, format=date_format, errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise DataValidationError(f"日期格式无效：{value!r}") from exc
+    else:
+        raise DataValidationError(
+            "日期必须是 date/datetime/Timestamp，或 YYYYMMDD、YYYY-MM-DD 字符串"
+        )
+
+    if pd.isna(timestamp):
+        raise DataValidationError(f"日期格式无效：{value!r}")
+    return timestamp.strftime("%Y%m%d")
 
 
 def _to_dashed(value: str) -> str:
@@ -603,6 +653,85 @@ def _tx_symbol_with_exchange_safe(code: str) -> str | None:
     return f"{m.group(2)}.{m.group(1).upper()}"
 
 
+# 全市场沪深 A 股代码/名称表（有界 TTL 内存缓存，避免每次搜索都重拉全市场）。
+_stock_universe_cache: pd.DataFrame | None = None
+_stock_universe_cached_at: float | None = None
+
+
+def _get_stock_universe() -> pd.DataFrame:
+    """在线拉取全市场沪深 A 股代码/名称表，列 ``code, symbol, name, market``。
+
+    数据源 AkShare ``stock_info_a_code_name``（东财）。只保留沪（6）/深（0、3），
+    北交所（4/8/92）等不支持的市场被剔除。网络失败抛 ``NoDataError``；不写本地文件。
+    """
+    global _stock_universe_cache, _stock_universe_cached_at
+    now = time.monotonic()
+    if (
+        _stock_universe_cache is not None
+        and _stock_universe_cached_at is not None
+        and now - _stock_universe_cached_at < _STOCK_UNIVERSE_CACHE_TTL_SECONDS
+    ):
+        return _stock_universe_cache.copy()
+
+    import akshare as ak
+
+    try:
+        raw = _retry(ak.stock_info_a_code_name, max_retries=1)
+    except _RETRYABLE_EXCEPTIONS as exc:
+        raise NoDataError(f"股票代码表获取失败：{exc}") from exc
+    if raw is None or raw.empty or not {"code", "name"}.issubset(raw.columns):
+        raise NoDataError("股票代码表为空或缺少 code/name 列")
+
+    df = pd.DataFrame({
+        "code": raw["code"].astype(str).str.strip(),
+        "name": raw["name"].astype(str).str.strip(),
+    })
+    df["symbol"] = df["code"].map(_symbol_with_exchange_safe)  # 北交所等→None
+    df = df.dropna(subset=["symbol"])
+    df["market"] = df["symbol"].str[-2:]
+    _stock_universe_cache = df[["code", "symbol", "name", "market"]].reset_index(drop=True)
+    _stock_universe_cached_at = now
+    return _stock_universe_cache.copy()
+
+
+def search_stock_symbols(query: str, *, limit: int = 20) -> pd.DataFrame:
+    """按代码或名称模糊搜索沪深 A 股，返回 ``symbol, name, market``。
+
+    Args:
+        query: 搜索关键词；支持股票代码（``600519`` / ``600519.SH`` / ``sh600519``，
+            提取其中数字做前缀模糊）或中文名称（``茅台``，包含匹配）。
+        limit: 返回条数上限，自动收敛到 ``[1, 200]``。
+
+    Returns:
+        DataFrame，列 ``symbol``（规范形式 ``600519.SH``）、``name``、
+        ``market``（"SH"|"SZ"）。结果去重、按 symbol 稳定升序排序；无匹配返回空表
+        （不抛异常，便于前端把空结果直接渲染成“未找到”）。
+
+    Raises:
+        NoDataError: 在线股票代码表获取失败。
+    """
+    limit = max(1, min(int(limit), 200))
+    universe = _get_stock_universe()
+
+    q = str(query).strip()
+    if not q:
+        return pd.DataFrame(columns=["symbol", "name", "market"])
+
+    q_digits = "".join(ch for ch in q if ch.isdigit())
+    mask = pd.Series(False, index=universe.index)
+    if q_digits:
+        mask |= universe["code"].str.startswith(q_digits)
+    mask |= universe["name"].str.contains(q, regex=False, na=False)
+
+    result = (
+        universe[mask]
+        .drop_duplicates(subset=["symbol"])
+        .sort_values("symbol", kind="stable")
+        .head(limit)
+    )
+    return result[["symbol", "name", "market"]].reset_index(drop=True)
+
+
 def _load_sample(symbols: list[str], start: str, end: str) -> pd.DataFrame:
     if not _SAMPLE_PATH.exists():
         raise NoDataError("未获取到行情数据，且缺少 Sample Data 回退文件")
@@ -688,9 +817,7 @@ def fetch_realtime_quotes(symbols: str | Iterable[str]) -> pd.DataFrame:
         InvalidSymbolError: malformed or unsupported symbol.
         NoDataError: every provider failed or could not find the symbols.
     """
-    symbols = _normalize_symbols(symbols)
-    for symbol in symbols:
-        _validate_symbol(symbol)
+    symbols = _normalize_symbols(symbols)  # InvalidSymbolError propagates here
 
     remaining = list(symbols)
     frames: list[pd.DataFrame] = []
@@ -730,7 +857,11 @@ def fetch_realtime_quotes(symbols: str | Iterable[str]) -> pd.DataFrame:
 def _fetch_realtime_eastmoney(symbols: list[str]) -> pd.DataFrame | None:
     import akshare as ak
 
-    raw = ak.stock_zh_a_spot_em()
+    raw = _retry(
+        ak.stock_zh_a_spot_em,
+        max_retries=_REALTIME_MAX_RETRIES,
+        backoff=_REALTIME_RETRY_BACKOFF_SECONDS,
+    )
     if raw is None or raw.empty:
         return None
     return _convert_realtime_em(raw, symbols)
@@ -739,7 +870,11 @@ def _fetch_realtime_eastmoney(symbols: list[str]) -> pd.DataFrame | None:
 def _fetch_realtime_sina(symbols: list[str]) -> pd.DataFrame | None:
     import akshare as ak
 
-    raw = ak.stock_zh_a_spot()
+    raw = _retry(
+        ak.stock_zh_a_spot,
+        max_retries=_REALTIME_MAX_RETRIES,
+        backoff=_REALTIME_RETRY_BACKOFF_SECONDS,
+    )
     if raw is None or raw.empty:
         return None
     return _convert_realtime_sina(raw, symbols)

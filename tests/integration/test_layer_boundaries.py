@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PAGE_FILES = [ROOT / "app.py", *(ROOT / "pages").glob("*.py")]
+PAGE_FILES = [ROOT / "app.py", *(ROOT / "app_pages").glob("*.py")]
 DOMAIN_DIRS = (
     ROOT / "src" / "data",
     ROOT / "src" / "analysis",
@@ -61,8 +61,10 @@ def test_domain_modules_do_not_import_streamlit() -> None:
 
 
 def test_clustering_page_does_not_offer_variable_k() -> None:
-    page = (ROOT / "pages" / "4_股票聚类.py").read_text(encoding="utf-8")
+    page = (ROOT / "app_pages" / "multi_stock.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "n_clusters" not in page
     assert "slider(" not in page
-    assert "k=3" in page
+    assert "KMeans(k=3)" in page
