@@ -19,7 +19,11 @@ from sklearn.metrics import mean_absolute_error, r2_score
 
 from src.contracts.supervised import REGRESSION_PREDICTION_COLUMNS
 from src.data.features import build_common_features
-from src.models.supervised.regression import FEATURE_COLS, fit_regression
+from src.models.supervised.regression import (
+    FEATURE_COLS,
+    fit_regression,
+    get_regression_sample_info,
+)
 from src.utils.exceptions import DataValidationError, InsufficientDataError
 
 
@@ -185,6 +189,22 @@ class TestEdgeCases:
         # 重新构建特征（feature_edges）：用恒定 close 重算
         with pytest.raises(InsufficientDataError, match="R²"):
             fit_regression(df)
+
+
+class TestSampleDiagnostics:
+    def test_sample_info_matches_predictions_and_split(self) -> None:
+        frame = _features()
+        info = get_regression_sample_info(frame)
+        result = fit_regression(frame)
+
+        assert info["input_rows"] == len(frame)
+        assert info["effective_rows"] == info["train_rows"] + info["test_rows"]
+        assert info["dropped_rows"] == len(frame) - info["effective_rows"]
+        assert info["test_rows"] == len(result["predictions"])
+        assert info["split_ratio"] == 0.8
+        train_end = pd.Timestamp(info["train_date_range"].split(" 至 ")[1])
+        test_start = pd.Timestamp(info["test_date_range"].split(" 至 ")[0])
+        assert train_end < test_start
 
 
 class TestMetricsAndReproducibility:

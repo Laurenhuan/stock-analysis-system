@@ -230,18 +230,40 @@ def test_single_stock_correlation_unavailable(single_df):
 
 
 def test_correlation_tie_reports_all_equal():
-    # 三只股票收益率逐日同序递增 → 两两 Spearman 均为 1.0。
-    df = _make_df(
-        {
-            "A": [100.0, 101.0, 103.0, 108.0],
-            "B": [10.0, 10.5, 11.5, 15.0],
-            "C": [20.0, 21.0, 23.0, 28.0],
-        }
+    # 20 个非恒定有效重叠收益，三只股票同序递增 → Spearman 均为 1.0。
+    dates = pd.date_range("2024-01-01", periods=20, freq="D")
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "trade_date": date,
+                "return": float(index * scale),
+            }
+            for index, date in enumerate(dates)
+            for symbol, scale in (("A", 1.0), ("B", 2.0), ("C", 3.0))
+        ]
     )
     insights = build_eda_insights(df)
     corr = _by_title(insights, "相关性")
     assert corr is not None
     assert "均为" in corr["finding"]
+    assert "20 个重叠交易日" in corr["finding"]
+
+
+def test_low_overlap_correlation_is_not_ranked():
+    df = _make_df(
+        {
+            "A": [100.0, 101.0, 103.0, 108.0],
+            "B": [10.0, 10.5, 11.5, 15.0],
+        }
+    )
+
+    insights = build_eda_insights(df)
+    corr = _by_title(insights, "相关性样本较少")
+
+    assert corr is not None
+    assert "不进行最高/最低排名" in corr["finding"]
+    assert "3 个重叠交易日" in corr["evidence"]
 
 
 def test_insufficient_correlation_overlap_is_graceful():

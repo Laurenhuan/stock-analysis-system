@@ -1,0 +1,16 @@
+D5 最终健壮性收尾测试记录
+日期：2026-09-05
+分支：fix/final-hardening
+基线：Gitee origin/main 7ae1f18（已包含 Role 6 动态区间回归 PR !36）
+
+严格全仓测试命令：
+.venv\Scripts\python.exe -m pytest -q -W error::FutureWarning -W error::DeprecationWarning
+分类专项结果：43 passed in 1.68s
+严格全仓结果：465 passed in 9.01s
+
+覆盖范围：Role 2 日期/缓存/实时重试；Role 3 相关性样本说明与弃用告警；Role 4 分类输入与退化模型；Role 5 退化聚类；Role 6 样本诊断；Role 1 Service、页面与 AppTest 集成。
+
+Role 3 代码来源：仅纳入其 pandas 弃用告警修复并保留原作者归属（最终分支提交 3bd361f）；未纳入其后续预测解读/Wiki，未修改 Role 3 的 daily 或 prompts。
+课程记录隔离：未跟踪的 daily/25151407/D5.md、D6.md 与 prompts/25151407/D5、D6 均未纳入本轮代码改动。
+在线行为：本轮未运行在线冒烟，不补写网络结果。
+空白检查：最终提交前再次执行 git diff --check。

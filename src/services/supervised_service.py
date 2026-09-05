@@ -8,11 +8,18 @@ from pandas import DataFrame
 from plotly.graph_objects import Figure
 
 from src.contracts.supervised import ClassificationResult, RegressionResult
-from src.models.supervised.classification import run_classification
-from src.models.supervised.regression import fit_regression
+from src.models.supervised.classification import (
+    ClassificationSampleInfo,
+    get_classification_sample_info,
+    run_classification,
+)
+from src.models.supervised.regression import (
+    RegressionSampleInfo,
+    fit_regression,
+    get_regression_sample_info,
+)
 from src.utils.exceptions import NoDataError
 from src.visualization.charts import plot_actual_vs_predicted, plot_confusion_matrix
-from .workspace_service import ModelSampleSummary, get_model_sample_summary
 
 
 class ClassificationDashboard(TypedDict):
@@ -21,7 +28,7 @@ class ClassificationDashboard(TypedDict):
     result: ClassificationResult
     confusion_matrix_figure: Figure
     feature_importance: DataFrame
-    sample_summary: ModelSampleSummary
+    sample_summary: ClassificationSampleInfo
 
 
 class RegressionDashboard(TypedDict):
@@ -29,7 +36,7 @@ class RegressionDashboard(TypedDict):
 
     result: RegressionResult
     actual_vs_predicted_figure: Figure
-    sample_summary: ModelSampleSummary
+    sample_summary: RegressionSampleInfo
 
 
 def run_classification_dashboard(
@@ -56,9 +63,7 @@ def run_classification_dashboard(
             title=f"{symbol} 测试集混淆矩阵",
         ),
         feature_importance=feature_importance,
-        sample_summary=get_model_sample_summary(
-            selected, result["predictions"]
-        ),
+        sample_summary=get_classification_sample_info(selected),
     )
 
 
@@ -77,7 +82,5 @@ def run_regression_dashboard(
         actual_vs_predicted_figure=plot_actual_vs_predicted(
             result["predictions"], title=f"{symbol} 实际值 vs 预测值"
         ),
-        sample_summary=get_model_sample_summary(
-            selected, result["predictions"]
-        ),
+        sample_summary=get_regression_sample_info(selected),
     )

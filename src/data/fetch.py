@@ -131,6 +131,11 @@ _TENCENT_MAX_RETRIES = 1
 # 膨胀。这里限制默认回看年数，作为请求数量保护。
 _TENCENT_DEFAULT_LOOKBACK_YEARS = 2
 
+_REALTIME_MAX_RETRIES = 1
+_REALTIME_RETRY_BACKOFF_SECONDS = 0.25
+
+_STOCK_UNIVERSE_CACHE_TTL_SECONDS = 6 * 60 * 60
+
 # provider 名 → daily/realtime ``data_source`` 取值。
 _AKSHARE_SOURCE_BY_PROVIDER = {
     "eastmoney": "akshare_eastmoney",
@@ -303,11 +308,30 @@ def _normalize_symbol(symbol: str) -> str:
 def _to_yyyymmdd(value) -> str:
     if value is None:
         return ""
-    if isinstance(value, pd.Timestamp):
-        return value.strftime("%Y%m%d")
-    if isinstance(value, (datetime, date)):
-        return value.strftime("%Y%m%d")
-    return str(value).strip().replace("-", "").replace("/", "")
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        timestamp = pd.Timestamp(value)
+    elif isinstance(value, str):
+        raw = value.strip()
+        if re.fullmatch(r"\d{8}", raw):
+            date_format = "%Y%m%d"
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            date_format = "%Y-%m-%d"
+        else:
+            raise DataValidationError(
+                "日期必须是 date/datetime/Timestamp，或 YYYYMMDD、YYYY-MM-DD 字符串"
+            )
+        try:
+            timestamp = pd.to_datetime(raw, format=date_format, errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise DataValidationError(f"日期格式无效：{value!r}") from exc
+    else:
+        raise DataValidationError(
+            "日期必须是 date/datetime/Timestamp，或 YYYYMMDD、YYYY-MM-DD 字符串"
+        )
+
+    if pd.isna(timestamp):
+        raise DataValidationError(f"日期格式无效：{value!r}")
+    return timestamp.strftime("%Y%m%d")
 
 
 def _to_dashed(value: str) -> str:
@@ -629,8 +653,9 @@ def _tx_symbol_with_exchange_safe(code: str) -> str | None:
     return f"{m.group(2)}.{m.group(1).upper()}"
 
 
-# 全市场沪深 A 股代码/名称表（进程内内存缓存，避免搜索框每次敲键都重拉全市场）。
+# 全市场沪深 A 股代码/名称表（有界 TTL 内存缓存，避免每次搜索都重拉全市场）。
 _stock_universe_cache: pd.DataFrame | None = None
+_stock_universe_cached_at: float | None = None
 
 
 def _get_stock_universe() -> pd.DataFrame:
@@ -639,9 +664,14 @@ def _get_stock_universe() -> pd.DataFrame:
     数据源 AkShare ``stock_info_a_code_name``（东财）。只保留沪（6）/深（0、3），
     北交所（4/8/92）等不支持的市场被剔除。网络失败抛 ``NoDataError``；不写本地文件。
     """
-    global _stock_universe_cache
-    if _stock_universe_cache is not None:
-        return _stock_universe_cache
+    global _stock_universe_cache, _stock_universe_cached_at
+    now = time.monotonic()
+    if (
+        _stock_universe_cache is not None
+        and _stock_universe_cached_at is not None
+        and now - _stock_universe_cached_at < _STOCK_UNIVERSE_CACHE_TTL_SECONDS
+    ):
+        return _stock_universe_cache.copy()
 
     import akshare as ak
 
@@ -660,7 +690,8 @@ def _get_stock_universe() -> pd.DataFrame:
     df = df.dropna(subset=["symbol"])
     df["market"] = df["symbol"].str[-2:]
     _stock_universe_cache = df[["code", "symbol", "name", "market"]].reset_index(drop=True)
-    return _stock_universe_cache
+    _stock_universe_cached_at = now
+    return _stock_universe_cache.copy()
 
 
 def search_stock_symbols(query: str, *, limit: int = 20) -> pd.DataFrame:
@@ -826,7 +857,11 @@ def fetch_realtime_quotes(symbols: str | Iterable[str]) -> pd.DataFrame:
 def _fetch_realtime_eastmoney(symbols: list[str]) -> pd.DataFrame | None:
     import akshare as ak
 
-    raw = ak.stock_zh_a_spot_em()
+    raw = _retry(
+        ak.stock_zh_a_spot_em,
+        max_retries=_REALTIME_MAX_RETRIES,
+        backoff=_REALTIME_RETRY_BACKOFF_SECONDS,
+    )
     if raw is None or raw.empty:
         return None
     return _convert_realtime_em(raw, symbols)
@@ -835,7 +870,11 @@ def _fetch_realtime_eastmoney(symbols: list[str]) -> pd.DataFrame | None:
 def _fetch_realtime_sina(symbols: list[str]) -> pd.DataFrame | None:
     import akshare as ak
 
-    raw = ak.stock_zh_a_spot()
+    raw = _retry(
+        ak.stock_zh_a_spot,
+        max_retries=_REALTIME_MAX_RETRIES,
+        backoff=_REALTIME_RETRY_BACKOFF_SECONDS,
+    )
     if raw is None or raw.empty:
         return None
     return _convert_realtime_sina(raw, symbols)

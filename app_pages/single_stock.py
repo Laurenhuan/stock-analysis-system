@@ -185,12 +185,18 @@ if classification_tab.open:
                     f"{result['metrics']['accuracy']:.2%}",
                     border=True,
                 )
-                st.metric("原始交易日", sample["input_rows"], border=True)
+                st.metric("有效样本", sample["effective_rows"], border=True)
+                st.metric("训练样本", sample["train_rows"], border=True)
                 st.metric("测试样本", sample["test_rows"], border=True)
-                st.metric("测试日期", sample["test_date_range"], border=True)
             st.caption(
-                "测试样本是处理滚动窗口和次日标签后测试集中的交易日数量，不是股票数量。"
-                "精确有效样本和训练样本数等待 Role 4 在模型契约中提供后接入。"
+                f"原始 {sample['input_rows']} 个交易日，滚动窗口和次日标签共剔除 "
+                f"{sample['dropped_rows']} 行；训练区间 {sample['train_date_range']}，"
+                f"测试区间 {sample['test_date_range']}。以上样本数量均为交易日数量，"
+                "不是股票数量。"
+            )
+            st.info(
+                "Accuracy 是测试集分类正确比例；它不表示未来收益，也应结合混淆矩阵"
+                "判断模型是否只偏向某一类别。"
             )
             left, right = st.columns([1.4, 1])
             with left:
@@ -226,11 +232,18 @@ if regression_tab.open:
             with st.container(horizontal=True, gap="medium"):
                 st.metric("MAE", f"{result['metrics']['mae']:.6f}", border=True)
                 st.metric("R²", f"{result['metrics']['r2']:.4f}", border=True)
-                st.metric("原始交易日", sample["input_rows"], border=True)
+                st.metric("训练样本", sample["train_rows"], border=True)
                 st.metric("测试样本", sample["test_rows"], border=True)
             st.caption(
-                f"测试区间：{sample['test_date_range']}。测试样本不是股票数量；"
-                "精确有效样本和训练样本数等待 Role 6 契约提供后接入。"
+                f"原始 {sample['input_rows']} 个交易日，滚动窗口和次日目标共剔除 "
+                f"{sample['dropped_rows']} 行，剩余 {sample['effective_rows']} 个有效样本；"
+                f"训练区间 {sample['train_date_range']}，测试区间 "
+                f"{sample['test_date_range']}。以上样本数量均为交易日数量，"
+                "不是股票数量。"
+            )
+            st.info(
+                "MAE 是测试集次日收益率预测的平均绝对误差，越小表示样本内误差越低；"
+                "R² 衡量相对测试集均值基线的解释能力，可能为负，负值表示表现不如均值基线。"
             )
             st.plotly_chart(
                 dashboard["actual_vs_predicted_figure"], width="stretch"

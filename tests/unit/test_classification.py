@@ -7,7 +7,11 @@ import pandas as pd
 import pytest
 from sklearn.tree import DecisionTreeClassifier
 
-from src.models.supervised.classification import FEATURE_NAMES, run_classification
+from src.models.supervised.classification import (
+    FEATURE_NAMES,
+    get_classification_sample_info,
+    run_classification,
+)
 from src.utils.exceptions import DataValidationError, InsufficientDataError
 
 
@@ -195,29 +199,65 @@ class TestErrors:
         df = pd.DataFrame(
             {"trade_date": pd.to_datetime(["2024-01-01"]), "close": [100.0]}
         )
-        with pytest.raises(DataValidationError, match="Missing required columns"):
+        with pytest.raises(DataValidationError, match="缺少必要字段"):
             run_classification(df)
 
     def test_unsorted_date_raises(self) -> None:
         df = _make_df().sort_values("trade_date", ascending=False)
-        with pytest.raises(DataValidationError, match="sorted by trade_date"):
+        with pytest.raises(DataValidationError, match="严格升序"):
             run_classification(df)
 
     def test_empty_dataframe_raises(self) -> None:
         df = pd.DataFrame(columns=["trade_date", "close", "volume"])
-        with pytest.raises(DataValidationError, match="empty"):
+        with pytest.raises(DataValidationError, match="为空"):
             run_classification(df)
 
     def test_non_finite_close_raises(self) -> None:
         df = _make_df()
         df.loc[100, "close"] = np.inf
-        with pytest.raises(DataValidationError, match="NaN or infinite"):
+        with pytest.raises(DataValidationError, match="NaN 或无穷值"):
             run_classification(df)
 
     def test_non_finite_volume_raises(self) -> None:
         df = _make_df()
         df.loc[100, "volume"] = np.nan
-        with pytest.raises(DataValidationError, match="NaN or infinite"):
+        with pytest.raises(DataValidationError, match="NaN 或无穷值"):
+            run_classification(df)
+    def test_nullable_missing_volume_raises_project_error(self) -> None:
+        df = _make_df()
+        df["volume"] = df["volume"].astype(object)
+        df.loc[100, "volume"] = pd.NA
+        with pytest.raises(DataValidationError, match="NaN 或无穷值"):
+            run_classification(df)
+
+    @pytest.mark.parametrize("bad_input", [None, [], "not a dataframe"])
+    def test_non_dataframe_raises_project_error(self, bad_input) -> None:
+        with pytest.raises(DataValidationError, match="DataFrame"):
+            run_classification(bad_input)
+
+    def test_nonnumeric_close_raises_project_error(self) -> None:
+        df = _make_df()
+        df["close"] = df["close"].astype(object)
+        df.loc[10, "close"] = "bad"
+        with pytest.raises(DataValidationError, match="无法转换"):
+            run_classification(df)
+
+    def test_invalid_or_duplicate_date_raises_project_error(self) -> None:
+        invalid = _make_df()
+        invalid["trade_date"] = invalid["trade_date"].astype(object)
+        invalid.loc[10, "trade_date"] = "not-a-date"
+        with pytest.raises(DataValidationError, match="无法解析"):
+            run_classification(invalid)
+
+        duplicate = _make_df()
+        duplicate.loc[10, "trade_date"] = duplicate.loc[9, "trade_date"]
+        with pytest.raises(DataValidationError, match="不能重复"):
+            run_classification(duplicate)
+
+    def test_multi_symbol_raises_when_symbol_is_available(self) -> None:
+        df = _make_df()
+        df["symbol"] = ["A"] * 100 + ["B"] * 100
+        with pytest.raises(DataValidationError, match="一只股票"):
             run_classification(df)
 
     def test_too_few_samples_raises(self) -> None:
@@ -266,7 +306,22 @@ class TestDynamicSingleStockInput:
         assert 0.0 <= result["metrics"]["accuracy"] <= 1.0
 
     def test_minimum_viable_dataset(self) -> None:
-        """A dataset just above _MIN_SAMPLES should still produce results."""
-        df = _make_df(n=55)  # After feature eng ~35 samples (> 30)
+        """A valid dataset must leave enough training rows for a real split."""
+        df = _make_df(n=75)  # After feature engineering: 54 effective rows.
         result = run_classification(df)
         assert len(result["predictions"]) > 0
+        assert result["model"].tree_.node_count > 1
+
+    def test_sample_info_matches_model_split(self) -> None:
+        df = _make_df(n=200)
+        info = get_classification_sample_info(df)
+        result = run_classification(df)
+
+        assert info["input_rows"] == 200
+        assert info["effective_rows"] == info["train_rows"] + info["test_rows"]
+        assert info["dropped_rows"] == 200 - info["effective_rows"]
+        assert info["test_rows"] == len(result["predictions"])
+        assert info["split_ratio"] == 0.8
+        train_end = pd.Timestamp(info["train_date_range"].split(" 至 ")[1])
+        test_start = pd.Timestamp(info["test_date_range"].split(" 至 ")[0])
+        assert train_end < test_start

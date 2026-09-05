@@ -604,3 +604,31 @@ class TestTenStocks:
         pd.testing.assert_frame_equal(
             result1["cluster_centers"], result2["cluster_centers"]
         )
+
+
+class TestDegenerateClustering:
+    def test_identical_profiles_raise_clear_error(self) -> None:
+        profiles = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C"],
+                "mean_return": [0.01, 0.01, 0.01],
+                "volatility": [0.02, 0.02, 0.02],
+                "max_drawdown": [-0.1, -0.1, -0.1],
+            }
+        )
+
+        with pytest.raises(InsufficientDataError, match="可区分画像"):
+            run_clustering(profiles)
+
+    def test_only_two_distinct_profiles_cannot_form_three_clusters(self) -> None:
+        profiles = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C", "D"],
+                "mean_return": [0.01, 0.01, 0.03, 0.03],
+                "volatility": [0.02, 0.02, 0.04, 0.04],
+                "max_drawdown": [-0.1, -0.1, -0.2, -0.2],
+            }
+        )
+
+        with pytest.raises(InsufficientDataError, match="不足以形成 3 个簇"):
+            run_clustering(profiles)

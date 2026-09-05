@@ -99,9 +99,29 @@ def test_classification_tab_explains_test_samples() -> None:
     assert not app.exception
     metrics = {metric.label: metric.value for metric in app.metric}
     assert "Accuracy" in metrics
-    assert "原始交易日" in metrics
+    assert "有效样本" in metrics
+    assert "训练样本" in metrics
     assert "测试样本" in metrics
     assert any("不是股票数量" in item.value for item in app.caption)
+    assert any("混淆矩阵" in item.value for item in app.info)
+
+
+def test_regression_tab_explains_samples_and_negative_r2() -> None:
+    app = _app()
+    app.session_state["single_query"] = {
+        "symbol": "600519.SH",
+        "start_date": SAMPLE_START,
+        "end_date": SAMPLE_END,
+        "source": "sample",
+    }
+    app.session_state["single_workspace_tabs"] = "线性回归"
+    app.switch_page("app_pages/single_stock.py").run()
+
+    assert not app.exception
+    metrics = {metric.label: metric.value for metric in app.metric}
+    assert {"MAE", "R²", "训练样本", "测试样本"}.issubset(metrics)
+    assert any("不是股票数量" in item.value for item in app.caption)
+    assert any("可能为负" in item.value for item in app.info)
 
 
 def test_multi_workspace_reuses_one_sample_query_for_eda() -> None:

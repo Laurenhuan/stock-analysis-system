@@ -498,6 +498,34 @@ def test_fetch_market_data_rejects_start_after_end(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(
+    "bad_date",
+    ["not-a-date", "2024-99-99", "2024/01/01", [], pd.NaT],
+)
+def test_fetch_market_data_rejects_invalid_date_formats(bad_date):
+    with pytest.raises(DataValidationError, match="日期"):
+        fetch_market_data(
+            "600519.SH",
+            start_date=bad_date,
+            end_date="2024-12-31",
+            source="sample",
+        )
+
+
+@pytest.mark.parametrize(
+    "valid_date",
+    ["20240102", "2024-01-02", pd.Timestamp("2024-01-02"), datetime(2024, 1, 2)],
+)
+def test_fetch_market_data_accepts_documented_date_formats(valid_date):
+    df = fetch_market_data(
+        "600519.SH",
+        start_date=valid_date,
+        end_date="2024-01-05",
+        source="sample",
+    )
+    assert len(df) == 4
+
+
 def test_online_fetch_never_writes_local_csv(monkeypatch):
     """在线抓取（eastmoney / tencent / realtime）不得把结果写成本地 CSV。"""
     import akshare
