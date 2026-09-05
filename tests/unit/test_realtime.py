@@ -11,6 +11,11 @@ from src.data.fetch import _REALTIME_COLUMNS, fetch_realtime_quotes
 from src.utils.exceptions import InvalidSymbolError, NoDataError
 
 
+@pytest.fixture(autouse=True)
+def _disable_retry_sleep(monkeypatch):
+    monkeypatch.setattr("src.data.fetch.time.sleep", lambda *_args, **_kwargs: None)
+
+
 def _em_spot_frame() -> pd.DataFrame:
     """AkShare ``stock_zh_a_spot_em`` 输出形状（中文列名，成交量单位=手）。"""
     return pd.DataFrame({
@@ -78,6 +83,41 @@ def test_realtime_eastmoney_success(monkeypatch):
     assert df.attrs["provider"] == "eastmoney"
     assert df.attrs["is_sample"] is False
     assert "fetched_at" in df.attrs
+
+
+def test_realtime_retries_transient_eastmoney_failure(monkeypatch):
+    import akshare
+
+    calls = {"count": 0}
+
+    def flaky():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("temporary timeout")
+        return _em_spot_frame()
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", flaky)
+
+    df = fetch_realtime_quotes("600519.SH")
+
+    assert calls["count"] == 2
+    assert df.attrs["provider"] == "eastmoney"
+
+
+def test_realtime_programming_error_is_not_retried(monkeypatch):
+    import akshare
+
+    calls = {"count": 0}
+
+    def broken():
+        calls["count"] += 1
+        raise TypeError("schema adapter bug")
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", broken)
+
+    with pytest.raises(TypeError, match="schema adapter bug"):
+        fetch_realtime_quotes("600519.SH")
+    assert calls["count"] == 1
 
 
 def test_realtime_falls_back_to_sina(monkeypatch):

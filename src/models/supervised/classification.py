@@ -5,6 +5,8 @@ Contract v0.2 — features are fixed, errors raised as exceptions.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, confusion_matrix
@@ -31,14 +33,25 @@ FEATURE_NAMES: list[str] = [
 
 _REQUIRED_INPUT_COLS = ("trade_date", "close", "volume")
 
-# Minimum samples after feature engineering.
-# Rationale: with max_depth=3 and min_samples_leaf=20, the tree needs at
-# least ~60 training samples to form a meaningful structure (3 levels × 20
-# leaves).  30 samples as a hard floor catches obviously insufficient data
-# before the split, while the train/test split (80/20) ensures the training
-# set has ~24+ samples for a basic fit.  This is a safety net, not a
-# substitute for checking train/test emptiness after the split.
-_MIN_SAMPLES = 30
+_SPLIT_RATIO = 0.8
+_MIN_SAMPLES_LEAF = 20
+# A split needs at least two leaves. With an 80% training partition this
+# requires at least 50 effective samples so the training set contains 40 rows.
+_MIN_TRAIN_SAMPLES = 2 * _MIN_SAMPLES_LEAF
+_MIN_SAMPLES = 50
+
+
+class ClassificationSampleInfo(TypedDict):
+    """Public, presentation-safe sample diagnostics for one classification run."""
+
+    input_rows: int
+    effective_rows: int
+    dropped_rows: int
+    train_rows: int
+    test_rows: int
+    train_date_range: str
+    test_date_range: str
+    split_ratio: float
 
 
 # ---------------------------------------------------------------------------
@@ -46,31 +59,45 @@ _MIN_SAMPLES = 30
 # ---------------------------------------------------------------------------
 
 
-def _validate_input(df: pd.DataFrame) -> None:
-    """Validate raw input DataFrame before feature engineering.
-
-    Raises DataValidationError for structural issues.
-    """
+def _validate_input(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate and normalize one stock without mutating the caller's frame."""
+    if not isinstance(df, pd.DataFrame):
+        raise DataValidationError(
+            f"分类输入必须是 pandas.DataFrame，收到 {type(df).__name__}"
+        )
     if df.empty:
-        raise DataValidationError("Input DataFrame is empty")
+        raise DataValidationError("分类输入 DataFrame 为空")
 
     missing = set(_REQUIRED_INPUT_COLS) - set(df.columns)
     if missing:
-        raise DataValidationError(
-            f"Missing required columns: {sorted(missing)}"
-        )
+        raise DataValidationError(f"分类输入缺少必要字段：{sorted(missing)}")
 
-    if not df["trade_date"].is_monotonic_increasing:
-        raise DataValidationError(
-            "DataFrame must be sorted by trade_date ascending"
-        )
+    data = df.copy()
+    dates = pd.to_datetime(data["trade_date"], errors="coerce")
+    if dates.isna().any():
+        raise DataValidationError("trade_date 存在无法解析的日期")
+    if not dates.is_monotonic_increasing or dates.duplicated().any():
+        raise DataValidationError("trade_date 必须严格升序且不能重复")
+    data["trade_date"] = dates
 
-    # Check for non-finite values in numeric columns
     for col in ("close", "volume"):
-        if not np.isfinite(df[col]).all():
-            raise DataValidationError(
-                f"Column '{col}' contains NaN or infinite values"
-            )
+        original = data[col]
+        converted = pd.to_numeric(original, errors="coerce")
+        if (original.notna() & converted.isna()).any():
+            raise DataValidationError(f"{col} 存在无法转换为数值的内容")
+        values = converted.to_numpy(dtype=float, na_value=np.nan)
+        if not np.isfinite(values).all():
+            raise DataValidationError(f"{col} 含 NaN 或无穷值")
+        data[col] = converted
+
+    if "symbol" in data.columns:
+        symbols = data["symbol"]
+        if symbols.isna().any() or symbols.astype(str).str.strip().eq("").any():
+            raise DataValidationError("symbol 不能为空")
+        if symbols.astype(str).nunique() != 1:
+            raise DataValidationError("单次分类调用只处理一只股票")
+
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +145,52 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
+def _prepare_model_data(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Return validated input, effective model rows and the split index."""
+    prepared = _validate_input(df)
+    data = _build_features(prepared)
+    if len(data) < _MIN_SAMPLES:
+        raise InsufficientDataError(
+            f"滚动窗口与次日标签处理后至少需要 {_MIN_SAMPLES} 个有效样本，"
+            f"当前仅 {len(data)} 个"
+        )
+    split_idx = int(len(data) * _SPLIT_RATIO)
+    if split_idx < _MIN_TRAIN_SAMPLES:
+        raise InsufficientDataError(
+            f"训练集至少需要 {_MIN_TRAIN_SAMPLES} 个样本才能满足 "
+            f"min_samples_leaf={_MIN_SAMPLES_LEAF} 的基本分裂条件"
+        )
+    if len(data) - split_idx == 0:
+        raise InsufficientDataError("测试集为空")
+    return prepared, data, split_idx
+
+
+def _format_date_range(dates: pd.Series) -> str:
+    return (
+        f"{dates.iloc[0].date().isoformat()} 至 "
+        f"{dates.iloc[-1].date().isoformat()}"
+    )
+
+
+def get_classification_sample_info(
+    df: pd.DataFrame,
+) -> ClassificationSampleInfo:
+    """Describe effective rows and the exact time-ordered 80/20 split."""
+    prepared, data, split_idx = _prepare_model_data(df)
+    return ClassificationSampleInfo(
+        input_rows=int(len(prepared)),
+        effective_rows=int(len(data)),
+        dropped_rows=int(len(prepared) - len(data)),
+        train_rows=int(split_idx),
+        test_rows=int(len(data) - split_idx),
+        train_date_range=_format_date_range(data["trade_date"].iloc[:split_idx]),
+        test_date_range=_format_date_range(data["trade_date"].iloc[split_idx:]),
+        split_ratio=_SPLIT_RATIO,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -149,26 +222,12 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         if train/test set is empty after the split, or if only one
         class exists in the training set.
     """
-    # --- validate input ---
-    _validate_input(df)
-
-    # --- feature engineering ---
-    data = _build_features(df)
-
-    if len(data) < _MIN_SAMPLES:
-        raise InsufficientDataError(
-            f"Need at least {_MIN_SAMPLES} samples after feature engineering, "
-            f"got {len(data)}"
-        )
+    # Validation and feature engineering are shared with the public diagnostics.
+    _, data, split_idx = _prepare_model_data(df)
 
     # --- time-ordered 80/20 split (Contract v0.2: fixed ratio) ---
     X = data[FEATURE_NAMES]
     y = data["label"]
-
-    split_idx = int(len(X) * 0.8)
-
-    if split_idx == 0:
-        raise InsufficientDataError("Training set is empty after split")
 
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
@@ -185,10 +244,14 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
     # --- train ---
     model = DecisionTreeClassifier(
         max_depth=3,
-        min_samples_leaf=20,
+        min_samples_leaf=_MIN_SAMPLES_LEAF,
         random_state=42,
     )
     model.fit(X_train, y_train)
+    if model.tree_.node_count == 1:
+        raise InsufficientDataError(
+            "有效特征未能形成决策树分裂，当前模型会退化为单一类别预测"
+        )
 
     # --- predict ---
     y_pred = model.predict(X_test)
@@ -214,7 +277,7 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
 
     return {
         "model": model,
-        "feature_names": FEATURE_NAMES,
+        "feature_names": list(FEATURE_NAMES),
         "metrics": metrics,
         "predictions": predictions,
     }

@@ -29,6 +29,7 @@ def stock_universe(monkeypatch):
 
     monkeypatch.setattr(akshare, "stock_info_a_code_name", lambda: _universe_frame())
     monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
     return akshare
 
 
@@ -103,6 +104,7 @@ def test_search_dedups_duplicate_symbols(monkeypatch):
     })
     monkeypatch.setattr(akshare, "stock_info_a_code_name", lambda: dup)
     monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
 
     df = search_stock_symbols("茅台")
     assert len(df) == 1
@@ -116,7 +118,35 @@ def test_search_network_failure_raises(monkeypatch):
 
     monkeypatch.setattr(akshare, "stock_info_a_code_name", down)
     monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
     _no_sleep(monkeypatch)
 
     with pytest.raises(NoDataError):
         search_stock_symbols("600519")
+
+
+def test_stock_universe_cache_has_real_ttl_and_returns_copies(monkeypatch):
+    import akshare
+
+    calls = {"count": 0}
+    clock = {"now": 100.0}
+
+    def load_universe():
+        calls["count"] += 1
+        return _universe_frame()
+
+    monkeypatch.setattr(akshare, "stock_info_a_code_name", load_universe)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
+    monkeypatch.setattr(fetch_mod.time, "monotonic", lambda: clock["now"])
+
+    first = fetch_mod._get_stock_universe()
+    first.loc[0, "name"] = "被调用者修改"
+    second = fetch_mod._get_stock_universe()
+
+    assert calls["count"] == 1
+    assert "被调用者修改" not in second["name"].tolist()
+
+    clock["now"] += fetch_mod._STOCK_UNIVERSE_CACHE_TTL_SECONDS + 1
+    fetch_mod._get_stock_universe()
+    assert calls["count"] == 2

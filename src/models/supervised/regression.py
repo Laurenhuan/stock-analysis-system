@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -43,6 +45,19 @@ FEATURE_COLS: list[str] = [
 SPLIT_RATIO: float = 0.8
 # 目标近似常量的判定阈值（极差 < 该值视为常量）。
 _CONSTANT_EPS: float = 1e-10
+
+
+class RegressionSampleInfo(TypedDict):
+    """Public, presentation-safe sample diagnostics for one regression run."""
+
+    input_rows: int
+    effective_rows: int
+    dropped_rows: int
+    train_rows: int
+    test_rows: int
+    train_date_range: str
+    test_date_range: str
+    split_ratio: float
 
 
 def _prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,6 +92,64 @@ def _prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _build_model_frame(prepared: pd.DataFrame) -> pd.DataFrame:
+    """Build the private next-day target and keep only effective model rows."""
+    frame = prepared.reset_index(drop=True).copy()
+    frame["next_return"] = frame["return"].shift(-1)
+    return frame.dropna(
+        subset=FEATURE_COLS + ["next_return"]
+    ).reset_index(drop=True)
+
+
+def _split_model_data(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Return validated input, effective model rows and the 80/20 split index."""
+    prepared = _prepare_frame(df)
+    if prepared["symbol"].nunique() != 1:
+        raise DataValidationError("单次回归调用只处理一只股票")
+    if (
+        not prepared["trade_date"].is_monotonic_increasing
+        or prepared["trade_date"].duplicated().any()
+    ):
+        raise DataValidationError("trade_date 必须严格升序且不能重复")
+
+    data = _build_model_frame(prepared)
+    if data.empty:
+        raise InsufficientDataError(
+            "处理滚动窗口/NaN 与次日目标后没有有效样本（数据可能全为 NaN 或样本过少）"
+        )
+
+    split_index = int(len(data) * SPLIT_RATIO)
+    if split_index == 0:
+        raise InsufficientDataError("训练集为空（有效样本过少，80% 切分后无训练样本）")
+    if len(data) - split_index < 2:
+        raise InsufficientDataError("测试集样本不足以计算 R²（至少需要 2 个样本）")
+    return prepared, data, split_index
+
+
+def _format_date_range(dates: pd.Series) -> str:
+    return (
+        f"{dates.iloc[0].date().isoformat()} 至 "
+        f"{dates.iloc[-1].date().isoformat()}"
+    )
+
+
+def get_regression_sample_info(df: pd.DataFrame) -> RegressionSampleInfo:
+    """Describe rolling-window loss and the exact time-ordered split."""
+    prepared, data, split_index = _split_model_data(df)
+    return RegressionSampleInfo(
+        input_rows=int(len(prepared)),
+        effective_rows=int(len(data)),
+        dropped_rows=int(len(prepared) - len(data)),
+        train_rows=int(split_index),
+        test_rows=int(len(data) - split_index),
+        train_date_range=_format_date_range(data["trade_date"].iloc[:split_index]),
+        test_date_range=_format_date_range(data["trade_date"].iloc[split_index:]),
+        split_ratio=SPLIT_RATIO,
+    )
+
+
 def fit_regression(df: pd.DataFrame) -> RegressionResult:
     """对一只股票（任意日期范围）的公共特征做次日收益率线性回归。
 
@@ -91,40 +164,11 @@ def fit_regression(df: pd.DataFrame) -> RegressionResult:
         InsufficientDataError: 处理 NaN 与次日目标后训练/测试样本为空，或测试集
             样本不足以计算 R²（< 2）。
     """
-    prepared = _prepare_frame(df)
-    if prepared["symbol"].nunique() != 1:
-        raise DataValidationError("单次回归调用只处理一只股票")
-    if (
-        not prepared["trade_date"].is_monotonic_increasing
-        or prepared["trade_date"].duplicated().any()
-    ):
-        raise DataValidationError("trade_date 必须严格升序且不能重复")
-
-    # 输入已通过严格升序校验，后续移位保持交易日顺序。
-    frame = prepared.reset_index(drop=True)
-
-    # 私有目标：下一交易日收益率。首行 return 为 NaN，末行 next_return 为 NaN。
-    frame["next_return"] = frame["return"].shift(-1)
-
-    cols = FEATURE_COLS + ["next_return"]
-    data = frame.dropna(subset=cols).reset_index(drop=True)
-    if data.empty:
-        raise InsufficientDataError(
-            "处理滚动窗口/NaN 与次日目标后没有有效样本（数据可能全为 NaN 或样本过少）"
-        )
-
-    split_index = int(len(data) * SPLIT_RATIO)
+    _, data, split_index = _split_model_data(df)
     X = data[FEATURE_COLS]
     y = data["next_return"].astype(float)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
-
-    if len(y_train) == 0:
-        raise InsufficientDataError("训练集为空（有效样本过少，80% 切分后无训练样本）")
-    if len(y_test) == 0:
-        raise InsufficientDataError("测试集为空（有效样本过少，不足以构成最新 20%）")
-    if len(y_test) < 2:
-        raise InsufficientDataError("测试集样本不足以计算 R²（至少需要 2 个样本）")
     if np.ptp(y_test.to_numpy(dtype=float)) < _CONSTANT_EPS:
         raise InsufficientDataError("测试集目标近似常量，R² 无法有效定义")
 

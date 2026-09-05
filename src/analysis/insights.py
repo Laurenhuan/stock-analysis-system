@@ -45,6 +45,7 @@ DISCLAIMER = "仅描述所选历史区间，不代表未来表现，不构成投
 
 # 相关系数方法白名单（模块内自持，不复用 eda 的私有 _CORR_METHODS）。
 _CORR_METHODS = ("pearson", "spearman", "kendall")
+_RELIABLE_CORRELATION_OVERLAP = 20
 
 
 class EdaInsight(TypedDict):
@@ -663,6 +664,20 @@ def _correlation_pairs(corr: DataFrame) -> list[tuple[str, str, float]]:
     return pairs
 
 
+def _correlation_overlaps(data: DataFrame) -> dict[tuple[str, str], int]:
+    """Count valid overlapping returns for every stock pair."""
+    pivot = data.pivot(index="trade_date", columns="symbol", values="return")
+    valid = pivot.notna()
+    symbols = [str(symbol) for symbol in pivot.columns]
+    return {
+        (symbols[i], symbols[j]): int(
+            (valid.iloc[:, i] & valid.iloc[:, j]).sum()
+        )
+        for i in range(len(symbols))
+        for j in range(i + 1, len(symbols))
+    }
+
+
 def _correlation_insights(data: DataFrame, method: str) -> list[EdaInsight]:
     if "return" not in data.columns:
         return []
@@ -695,11 +710,34 @@ def _correlation_insights(data: DataFrame, method: str) -> list[EdaInsight]:
             DISCLAIMER,
         )]
 
+    overlaps = _correlation_overlaps(data)
+    thin_pairs = {
+        pair: count
+        for pair, count in overlaps.items()
+        if count < _RELIABLE_CORRELATION_OVERLAP
+    }
+    if thin_pairs:
+        evidence = "；".join(
+            f"{left} 与 {right}：{count} 个重叠交易日"
+            for (left, right), count in sorted(thin_pairs.items())
+        )
+        return [_insight(
+            CATEGORY_CORRELATION,
+            "相关性样本较少",
+            "已计算相关系数，但部分股票对重叠样本较少，不进行最高/最低排名。",
+            evidence,
+            f"少于 {_RELIABLE_CORRELATION_OVERLAP} 个重叠交易日的相关性仅作描述。",
+            DISCLAIMER,
+        )]
+
     label = {"pearson": "Pearson", "spearman": "Spearman", "kendall": "Kendall τ"}[method]
     max_v = max(p[2] for p in pairs)
     min_v = min(p[2] for p in pairs)
     if max_v == min_v:
-        all_desc = "；".join(f"{a} 与 {b}" for a, b, _ in pairs)
+        all_desc = "；".join(
+            f"{a} 与 {b}（{overlaps[(a, b)]} 个重叠交易日）"
+            for a, b, _ in pairs
+        )
         return [_insight(
             CATEGORY_CORRELATION, "相关性",
             f"所有股票对的 {label} 相关系数均为 {_corr(max_v)}：{all_desc}。",
@@ -710,8 +748,14 @@ def _correlation_insights(data: DataFrame, method: str) -> list[EdaInsight]:
 
     top = [p for p in pairs if p[2] == max_v]
     bottom = [p for p in pairs if p[2] == min_v]
-    top_desc = "；".join(f"{a} 与 {b}（{_corr(v)}）" for a, b, v in top)
-    bottom_desc = "；".join(f"{a} 与 {b}（{_corr(v)}）" for a, b, v in bottom)
+    top_desc = "；".join(
+        f"{a} 与 {b}（{_corr(v)}，{overlaps[(a, b)]} 个重叠交易日）"
+        for a, b, v in top
+    )
+    bottom_desc = "；".join(
+        f"{a} 与 {b}（{_corr(v)}，{overlaps[(a, b)]} 个重叠交易日）"
+        for a, b, v in bottom
+    )
     return [
         _insight(
             CATEGORY_CORRELATION, "相关性最高",

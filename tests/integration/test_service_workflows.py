@@ -90,6 +90,9 @@ def test_classification_service_runs_role4_and_role3_figure(
         "y_pred",
     ]
     assert len(result["predictions"]) >= 2
+    sample = dashboard["sample_summary"]
+    assert sample["effective_rows"] == sample["train_rows"] + sample["test_rows"]
+    assert sample["test_rows"] == len(result["predictions"])
     assert isinstance(dashboard["confusion_matrix_figure"], Figure)
 
 
@@ -112,6 +115,9 @@ def test_regression_service_runs_role6_and_role3_figure(sample_market_data) -> N
         "y_pred",
     ]
     assert len(result["predictions"]) >= 2
+    sample = dashboard["sample_summary"]
+    assert sample["effective_rows"] == sample["train_rows"] + sample["test_rows"]
+    assert sample["test_rows"] == len(result["predictions"])
     assert isinstance(dashboard["actual_vs_predicted_figure"], Figure)
 
 
