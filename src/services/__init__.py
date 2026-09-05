@@ -6,6 +6,7 @@ from .analysis_service import (
     get_analysis_status,
 )
 from .clustering_service import (
+    get_clustering_date_diagnostics,
     get_stock_profiles,
     run_stock_clustering,
     run_stock_clustering_dashboard,
@@ -19,6 +20,7 @@ from .market_service import (
     load_realtime_quotes,
     search_stocks,
 )
+from .report_service import build_quant_report
 from .supervised_service import (
     run_classification_dashboard,
     run_regression_dashboard,
@@ -32,7 +34,9 @@ from .workspace_service import (
 __all__ = [
     "build_eda_dashboard",
     "build_price_figure",
+    "build_quant_report",
     "get_analysis_status",
+    "get_clustering_date_diagnostics",
     "get_market_metadata",
     "get_market_overview",
     "get_market_summary",

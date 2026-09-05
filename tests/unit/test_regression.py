@@ -22,6 +22,7 @@ from src.data.features import build_common_features
 from src.models.supervised.regression import (
     FEATURE_COLS,
     fit_regression,
+    forecast_next_return,
     get_regression_sample_info,
 )
 from src.utils.exceptions import DataValidationError, InsufficientDataError
@@ -220,3 +221,18 @@ class TestMetricsAndReproducibility:
         r2 = fit_regression(_features())
         pd.testing.assert_frame_equal(r1["predictions"], r2["predictions"])
         assert r1["metrics"] == r2["metrics"]
+
+def test_next_return_signal_uses_latest_date_and_implied_price() -> None:
+    data = _features()
+    original = data.copy(deep=True)
+
+    first = forecast_next_return(data)
+    second = forecast_next_return(data)
+
+    assert first == second
+    assert first["as_of_date"] == data["trade_date"].iloc[-1].date().isoformat()
+    assert first["implied_price"] == pytest.approx(
+        first["latest_close"] * (1.0 + first["predicted_return"])
+    )
+    assert first["training_rows"] > 0
+    pd.testing.assert_frame_equal(data, original)

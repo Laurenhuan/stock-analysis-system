@@ -53,6 +53,14 @@ class ClassificationSampleInfo(TypedDict):
     test_date_range: str
     split_ratio: float
 
+class NextDirectionForecast(TypedDict):
+    """Latest next-trading-day signal, separate from evaluation Contract v0.2."""
+
+    as_of_date: str
+    predicted_class: int
+    direction_label: str
+    training_rows: int
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers (private)
@@ -105,45 +113,40 @@ def _validate_input(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Construct features and the binary label from raw OHLCV data.
-
-    Returns the cleaned DataFrame (NaN dropped, last row removed).
-    All intermediate columns (return, next_return, label) are model-private
-    and never written back to the caller's DataFrame.
-    """
+def _build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Construct predictors available at each date without creating a target."""
     data = df.copy()
-
-    # --- basic returns ---
-    data["return"] = data["close"].pct_change()
-    # Replace inf/-inf from pct_change (when close=0) with NaN, then drop
-    data["return"] = data["return"].replace([np.inf, -np.inf], np.nan)
-
+    data["return"] = data["close"].pct_change().replace(
+        [np.inf, -np.inf], np.nan
+    )
     data["return_lag1"] = data["return"].shift(1)
     data["return_lag2"] = data["return"].shift(2)
-
-    # --- moving averages ---
     data["ma5"] = data["close"].rolling(window=5).mean()
     data["ma20"] = data["close"].rolling(window=20).mean()
     data["ma_diff"] = data["ma5"] - data["ma20"]
-
-    # --- volatility & volume ---
     data["volatility_20d"] = data["return"].rolling(window=20).std()
-    data["volume_change"] = data["volume"].pct_change()
-    data["volume_change"] = data["volume_change"].replace(
+    data["volume_change"] = data["volume"].pct_change().replace(
         [np.inf, -np.inf], np.nan
     )
-
-    # --- label: next-day direction (model-private) ---
-    data["next_return"] = data["return"].shift(-1)
-    data["label"] = (data["next_return"] > 0).astype(int)
-
-    # Drop rows with NaN (from lag/rolling/inf) and the last row (no next_return)
-    data = data.dropna(subset=FEATURE_NAMES + ["label"])
-    data = data[data["next_return"].notna()]
-
     return data
 
+
+def _build_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Construct historical predictors and the private next-day label."""
+    data = _build_feature_frame(df)
+    data["next_return"] = data["return"].shift(-1)
+    data["label"] = (data["next_return"] > 0).astype(int)
+    data = data.dropna(subset=FEATURE_NAMES + ["next_return"])
+    return data
+
+
+def _new_classifier() -> DecisionTreeClassifier:
+    """Return the single Contract-approved deterministic estimator."""
+    return DecisionTreeClassifier(
+        max_depth=3,
+        min_samples_leaf=_MIN_SAMPLES_LEAF,
+        random_state=42,
+    )
 
 def _prepare_model_data(
     df: pd.DataFrame,
@@ -242,11 +245,8 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         )
 
     # --- train ---
-    model = DecisionTreeClassifier(
-        max_depth=3,
-        min_samples_leaf=_MIN_SAMPLES_LEAF,
-        random_state=42,
-    )
+    model = _new_classifier()
+
     model.fit(X_train, y_train)
     if model.tree_.node_count == 1:
         raise InsufficientDataError(
@@ -281,3 +281,32 @@ def run_classification(df: pd.DataFrame) -> ClassificationResult:
         "metrics": metrics,
         "predictions": predictions,
     }
+
+def forecast_next_direction(df: pd.DataFrame) -> NextDirectionForecast:
+    """Fit the same tree on all realised labels and signal the next trading day.
+
+    Historical test metrics remain produced by ``run_classification``.  This
+    function deliberately returns no claimed confidence: a tree leaf share is
+    not a calibrated market probability.
+    """
+    prepared, labelled, _ = _prepare_model_data(df)
+    latest_features = _build_feature_frame(prepared).dropna(
+        subset=FEATURE_NAMES
+    )
+    if latest_features.empty:
+        raise InsufficientDataError("最新交易日尚未形成完整分类特征")
+    if labelled["label"].nunique() < 2:
+        raise InsufficientDataError("完整历史样本只有一个方向类别，无法形成分类模型")
+
+    model = _new_classifier()
+    model.fit(labelled[FEATURE_NAMES], labelled["label"])
+    if model.tree_.node_count == 1:
+        raise InsufficientDataError("完整历史特征未能形成有效决策树分裂")
+    latest = latest_features.iloc[[-1]]
+    predicted = int(model.predict(latest[FEATURE_NAMES])[0])
+    return NextDirectionForecast(
+        as_of_date=latest["trade_date"].iloc[0].date().isoformat(),
+        predicted_class=predicted,
+        direction_label="上涨倾向" if predicted == 1 else "非上涨倾向",
+        training_rows=int(len(labelled)),
+    )

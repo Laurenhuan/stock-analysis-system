@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+import pandas as pd
 from pandas import DataFrame
 from plotly.graph_objects import Figure
 
@@ -30,6 +31,15 @@ from src.visualization.charts import (
 from src.utils.exceptions import InsufficientDataError
 
 
+class EdaPresentation(TypedDict):
+    """User-reading-order view assembled from existing EDA outputs."""
+
+    core_insights: list[EdaInsight]
+    summary_sentences: list[str]
+    sections: dict[str, list[EdaInsight]]
+    trend_snapshot: DataFrame
+
+
 class EdaDashboard(TypedDict):
     """Stable bundle consumed by the EDA Streamlit page."""
 
@@ -42,6 +52,7 @@ class EdaDashboard(TypedDict):
     extreme_returns: DataFrame
     correlation: DataFrame | None
     insights: list[EdaInsight]
+    presentation: EdaPresentation
     price_figure: Figure
     candlestick_figure: Figure
     returns_figure: Figure
@@ -49,6 +60,15 @@ class EdaDashboard(TypedDict):
     return_distribution_figure: Figure
     rolling_volatility_figure: Figure
     correlation_figure: Figure | None
+
+
+_CORE_INSIGHT_TITLES = (
+    "累计收益最高",
+    "回撤最深",
+    "波动最大",
+    "相关性最高",
+    "当前波动率水平",
+)
 
 
 def get_analysis_status() -> dict[str, str]:
@@ -66,6 +86,84 @@ def build_price_figure(data: DataFrame, *, show_ma: bool = True) -> Figure:
     return plot_price(data, show_ma=show_ma, title="收盘价与移动平均")
 
 
+def _trend_snapshot(data: DataFrame) -> DataFrame:
+    """Create a compact neutral view from already-computed MA columns."""
+    columns = ["symbol", "close", "ma5", "ma20", "cumulative_return"]
+    if any(column not in data.columns for column in columns):
+        return DataFrame(columns=[*columns, "price_vs_ma20", "ma5_vs_ma20"])
+    latest = (
+        data.sort_values(["symbol", "trade_date"])
+        .groupby("symbol", sort=True, as_index=False)
+        .tail(1)[columns]
+        .reset_index(drop=True)
+    )
+
+    def compare(left: float, right: float, label: str) -> str:
+        if pd.isna(left) or pd.isna(right):
+            return "尚未形成"
+        if left > right:
+            return f"高于{label}"
+        if left < right:
+            return f"低于{label}"
+        return f"等于{label}"
+
+    latest["price_vs_ma20"] = [
+        compare(close, ma20, "MA20")
+        for close, ma20 in zip(latest["close"], latest["ma20"])
+    ]
+    latest["ma5_vs_ma20"] = [
+        compare(ma5, ma20, "MA20")
+        for ma5, ma20 in zip(latest["ma5"], latest["ma20"])
+    ]
+    return latest
+
+
+def _build_presentation(
+    data: DataFrame,
+    insights: list[EdaInsight],
+) -> EdaPresentation:
+    sections = {
+        category: [
+            insight for insight in insights if insight["category"] == category
+        ]
+        for category in (
+            "performance",
+            "risk",
+            "correlation",
+            "trend",
+            "distribution",
+            "data_quality",
+        )
+    }
+    core: list[EdaInsight] = []
+    for title in _CORE_INSIGHT_TITLES:
+        match = next(
+            (insight for insight in insights if insight["title"] == title),
+            None,
+        )
+        if match is not None:
+            core.append(match)
+    if not any(item["category"] == "correlation" for item in core):
+        correlation_fallback = next(
+            (
+                insight
+                for insight in sections["correlation"]
+                if insight["title"]
+                in {"相关性", "相关性样本较少", "相关性样本不足"}
+            ),
+            None,
+        )
+        if correlation_fallback is not None:
+            core.append(correlation_fallback)
+    core = core[:5]
+    return EdaPresentation(
+        core_insights=core,
+        summary_sentences=[item["finding"] for item in core[:4]],
+        sections=sections,
+        trend_snapshot=_trend_snapshot(data),
+    )
+
+
 def build_eda_dashboard(
     data: DataFrame,
     *,
@@ -78,6 +176,7 @@ def build_eda_dashboard(
         corr = correlation_matrix(data, method=correlation_method)
     except InsufficientDataError:
         corr = None
+    insights = build_eda_insights(data, correlation_method=correlation_method)
     candle_symbol = candlestick_symbol or str(sorted(data["symbol"].unique())[0])
     return EdaDashboard(
         descriptive_statistics=describe_statistics(data),
@@ -88,9 +187,8 @@ def build_eda_dashboard(
         return_distribution=return_distribution_summary(data),
         extreme_returns=extreme_returns_summary(data),
         correlation=corr,
-        insights=build_eda_insights(
-            data, correlation_method=correlation_method
-        ),
+        insights=insights,
+        presentation=_build_presentation(data, insights),
         price_figure=plot_price(data, title="多股收盘价对比"),
         candlestick_figure=plot_candlestick(
             data,

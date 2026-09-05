@@ -59,6 +59,15 @@ class RegressionSampleInfo(TypedDict):
     test_date_range: str
     split_ratio: float
 
+class NextReturnForecast(TypedDict):
+    """Latest next-trading-day estimate, separate from Contract v0.2."""
+
+    as_of_date: str
+    predicted_return: float
+    latest_close: float
+    implied_price: float
+    training_rows: int
+
 
 def _prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     """校验并规范化输入（单只股票、升序、数值类型），仅做只读校验。"""
@@ -195,4 +204,24 @@ def fit_regression(df: pd.DataFrame) -> RegressionResult:
         feature_names=list(FEATURE_COLS),
         metrics=metrics,
         predictions=predictions,
+    )
+
+def forecast_next_return(df: pd.DataFrame) -> NextReturnForecast:
+    """Fit LinearRegression on all realised labels and estimate the next day."""
+    prepared, labelled, _ = _split_model_data(df)
+    latest_features = prepared.dropna(subset=FEATURE_COLS)
+    if latest_features.empty:
+        raise InsufficientDataError("最新交易日尚未形成完整回归特征")
+
+    model = LinearRegression()
+    model.fit(labelled[FEATURE_COLS], labelled["next_return"].astype(float))
+    latest = latest_features.iloc[[-1]]
+    predicted_return = float(model.predict(latest[FEATURE_COLS])[0])
+    latest_close = float(latest["close"].iloc[0])
+    return NextReturnForecast(
+        as_of_date=latest["trade_date"].iloc[0].date().isoformat(),
+        predicted_return=predicted_return,
+        latest_close=latest_close,
+        implied_price=latest_close * (1.0 + predicted_return),
+        training_rows=int(len(labelled)),
     )

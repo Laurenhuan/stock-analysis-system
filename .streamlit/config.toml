@@ -1,4 +1,9 @@
 # Based on Streamlit 1.63's bundled financial-dashboard theme.
+[server]
+address = "0.0.0.0"
+port = 8766
+headless = true
+
 [theme]
 base = "dark"
 primaryColor = "#60A5FA"

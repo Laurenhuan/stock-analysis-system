@@ -2,7 +2,7 @@
 
 ## Status
 
-Contract Review Candidate v0.2。Role 2–6 的公共实现均已接入 Role 1 Service。D4 使用项目首页、单股研究和多股比较三个 Streamlit 页面组织已集成功能。当前六人 Ownership 以 `docs/role_boundaries.md` 为准，日常集成规则见 `docs/team_conventions.md`。
+Contract Review Candidate v0.2。Role 2–6 的公共实现均已接入 Role 1 Service。应用使用首页、多股历史研究、单股模型分析、量化分析简报和项目介绍五个 Streamlit 页面组织功能；项目介绍通过 `st.Page(url_path="about.html")` 提供真实 `/about.html` 路由。当前六人 Ownership 以 `docs/role_boundaries.md` 为准，日常集成规则见 `docs/team_conventions.md`。
 
 ## Layering
 
@@ -45,6 +45,8 @@ Service Layer 不负责：
 | 决策树分类 | `run_classification_dashboard` | Role 4 + Role 3 图表 |
 | 线性回归 | `run_regression_dashboard` | Role 6 + Role 3 图表 |
 | 股票聚类 | `run_stock_clustering` | Role 5 |
+| 量化分析简报 | `build_quant_report` | Role 1 编排 Role 2–6 结果 |
+| 项目介绍 | 无业务 Service；只展示已核验的仓库事实 | Role 1 |
 
 ### Domain Modules
 
