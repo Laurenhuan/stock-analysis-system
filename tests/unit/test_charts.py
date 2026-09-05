@@ -140,9 +140,10 @@ def test_plot_price_symbols_requires_symbol_column(single_price_df):
 
 def test_plot_price_ten_symbols_traces():
     symbols = [f"S{i:03d}" for i in range(10)]
+    dates = pd.date_range("2024-01-02", periods=2)
     rows = [
         {
-            "trade_date": pd.Timestamp("2024-01-02") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "close": 100.0 + i + d,
         }
@@ -420,9 +421,10 @@ def test_chart_functions_do_not_mutate_input(
 
 def test_plot_price_twenty_symbols_traces():
     symbols = [f"STK{i:02d}" for i in range(20)]
+    dates = pd.date_range("2021-06-01", periods=3)
     rows = [
         {
-            "trade_date": pd.Timestamp("2021-06-01") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "close": 100.0 + i + d,
         }
@@ -436,9 +438,10 @@ def test_plot_price_twenty_symbols_traces():
 
 def test_plot_returns_comparison_fifteen_symbols_traces():
     symbols = [f"STK{i:02d}" for i in range(15)]
+    dates = pd.date_range("2020-01-06", periods=4)
     rows = [
         {
-            "trade_date": pd.Timestamp("2020-01-06") + pd.Timedelta(days=d),
+            "trade_date": dates[d],
             "symbol": s,
             "cumulative_return": 0.01 * i + 0.002 * d,
         }

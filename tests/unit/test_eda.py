@@ -29,6 +29,7 @@ def _make_df(closes_by_symbol: dict) -> pd.DataFrame:
     """Build a Contract-shaped DataFrame with hand-calculable returns/drawdown."""
     rows = []
     for sym, closes in closes_by_symbol.items():
+        dates = pd.date_range("2024-01-01", periods=len(closes))
         for i, c in enumerate(closes):
             prev = closes[i - 1] if i > 0 else None
             ret = c / prev - 1 if prev else np.nan
@@ -36,8 +37,7 @@ def _make_df(closes_by_symbol: dict) -> pd.DataFrame:
             rows.append(
                 {
                     "symbol": sym,
-                    "trade_date": pd.Timestamp("2024-01-01")
-                    + pd.Timedelta(days=i),
+                    "trade_date": dates[i],
                     "open": c * 0.99,
                     "high": c * 1.01,
                     "low": c * 0.98,
@@ -192,13 +192,14 @@ def test_correlation_matrix_spearman_perfect_rank():
         "C": [20.0, 19.5, 19.0, 18.0],
     }
     rows = []
+    dates = pd.date_range("2024-01-01", periods=4)
     for i in range(4):
         for sym, cs in closes.items():
             prev = cs[i - 1] if i > 0 else None
             rows.append(
                 {
                     "symbol": sym,
-                    "trade_date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i),
+                    "trade_date": dates[i],
                     "return": cs[i] / prev - 1 if prev else np.nan,
                 }
             )
@@ -306,9 +307,10 @@ def test_date_range_summary_arbitrary_dates():
     # 非 2024 年、非固定演示股票：日期结论应来自输入本身。
     rows = []
     base = pd.Timestamp("2021-07-05")
+    dates = pd.date_range(base, periods=3)
     for i, c in enumerate([50.0, 52.0, 51.0]):
         rows.append({
-            "symbol": "AAA", "trade_date": base + pd.Timedelta(days=i),
+            "symbol": "AAA", "trade_date": dates[i],
             "open": c * 0.99, "high": c * 1.01, "low": c * 0.98, "close": c,
             "volume": 1000.0, "amount": c * 1000.0, "return": np.nan,
             "cumulative_return": np.nan, "ma5": np.nan, "ma20": np.nan,
@@ -360,10 +362,11 @@ def test_return_distribution_summary_insufficient_nan():
 def test_return_distribution_summary_positive_kurtosis_for_outlier():
     # 收益分布含一个极端正收益 → 超额峰度应为正（厚尾）。
     closes = [100.0, 101.0, 100.5, 102.0, 101.0, 200.0]
+    dates = pd.date_range("2024-01-01", periods=len(closes))
     rows = [
         {
             "symbol": "A",
-            "trade_date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i),
+            "trade_date": dates[i],
             "return": c / closes[i - 1] - 1 if i > 0 else np.nan,
         }
         for i, c in enumerate(closes)

@@ -34,12 +34,13 @@ def _make_df(closes_by_symbol):
     """Build a Contract-shaped DataFrame; ma5/ma20 are NaN until formed."""
     rows = []
     for sym, closes in closes_by_symbol.items():
+        dates = pd.date_range("2024-01-01", periods=len(closes))
         for i, c in enumerate(closes):
             prev = closes[i - 1] if i > 0 else None
             rows.append(
                 {
                     "symbol": sym,
-                    "trade_date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i),
+                    "trade_date": dates[i],
                     "open": c * 0.99,
                     "high": c * 1.01,
                     "low": c * 0.98,
@@ -335,11 +336,12 @@ def test_arbitrary_date_range_and_symbols():
     base = pd.Timestamp("2021-07-05")
     closes = {"AAA": [50.0, 52.0, 51.0, 53.0], "BBB": [30.0, 31.0, 30.5, 32.0]}
     rows = []
+    dates = pd.date_range(base, periods=4)
     for sym, cs in closes.items():
         for i, c in enumerate(cs):
             prev = cs[i - 1] if i > 0 else None
             rows.append({
-                "symbol": sym, "trade_date": base + pd.Timedelta(days=i),
+                "symbol": sym, "trade_date": dates[i],
                 "open": c * 0.99, "high": c * 1.01, "low": c * 0.98, "close": c,
                 "volume": 1000.0, "amount": c * 1000.0,
                 "return": c / prev - 1 if prev else np.nan,
@@ -451,10 +453,11 @@ def test_volatility_regime_skipped_without_column(multi_df):
 def test_volatility_regime_present_with_column():
     base = pd.Timestamp("2024-01-01")
     rows = []
+    dates = pd.date_range(base, periods=3)
     for sym, vols in {"A": [0.10, 0.11, 0.12], "B": [0.20, 0.18, 0.16]}.items():
         for i, v in enumerate(vols):
             rows.append({
-                "symbol": sym, "trade_date": base + pd.Timedelta(days=i),
+                "symbol": sym, "trade_date": dates[i],
                 "return": 0.01,
                 "volatility_20d": v,
             })
@@ -468,11 +471,12 @@ def test_volatility_regime_deterministic_under_shuffle():
     base = pd.Timestamp("2024-01-01")
     offset = {"A": 0.0, "B": 0.005, "C": -0.003}
     rows = []
+    dates = pd.date_range(base, periods=6)
     for sym in ("A", "B", "C"):
         for i in range(6):
             rows.append({
                 "symbol": sym,
-                "trade_date": base + pd.Timedelta(days=i),
+                "trade_date": dates[i],
                 "return": 0.01 * (i % 3) + offset[sym],
                 "volatility_20d": 0.1 + 0.01 * i * (1 if sym == "C" else -1),
             })
@@ -488,10 +492,11 @@ def test_all_negative_kurtosis_not_called_fat_tail():
     # 所有股票超额峰度均为负 → 「超额峰度最高」不得固定解释成「厚尾/高于正态的 0」。
     base = pd.Timestamp("2024-01-01")
     rows = []
+    dates = pd.date_range(base, periods=5)
     for sym, rets in {"A": [0.01, 0.02, 0.03, 0.04, 0.05],
                       "B": [0.02, 0.04, 0.06, 0.08, 0.10]}.items():
         for i, r in enumerate(rets):
-            rows.append({"symbol": sym, "trade_date": base + pd.Timedelta(days=i),
+            rows.append({"symbol": sym, "trade_date": dates[i],
                          "return": r})
     insights = build_eda_insights(pd.DataFrame(rows))
     fat = _by_title(insights, "超额峰度最高")
@@ -504,8 +509,9 @@ def test_volatility_falling_from_high_still_above_median_not_called_rising():
     # 波动率从高位回落、但最新值仍高于历史中位数 → 应称「相对高波动阶段」，而非「上升」。
     base = pd.Timestamp("2024-01-01")
     vols = [0.10, 0.15, 0.20, 0.90, 0.60]
+    dates = pd.date_range(base, periods=len(vols))
     rows = [
-        {"symbol": "A", "trade_date": base + pd.Timedelta(days=i),
+        {"symbol": "A", "trade_date": dates[i],
          "return": 0.01, "volatility_20d": v}
         for i, v in enumerate(vols)
     ]
@@ -520,8 +526,9 @@ def test_volatility_falling_from_high_still_above_median_not_called_rising():
 def test_all_positive_returns_min_not_called_drop():
     # 所有有效日收益均为正 → 「最低单日收益」不得解释为「最大单日跌幅」。
     base = pd.Timestamp("2024-01-01")
+    dates = pd.date_range(base, periods=4)
     rows = [
-        {"symbol": "A", "trade_date": base + pd.Timedelta(days=i), "return": r}
+        {"symbol": "A", "trade_date": dates[i], "return": r}
         for i, r in enumerate([0.01, 0.02, 0.015, 0.03])
     ]
     insights = build_eda_insights(pd.DataFrame(rows))
