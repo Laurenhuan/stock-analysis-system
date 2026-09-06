@@ -8,6 +8,7 @@ clears the process-wide cache so the suite runs offline and deterministically.
 
 import pandas as pd
 import pytest
+from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
 import src.data.fetch as fetch_mod
 from src.data.fetch import search_stock_symbols
@@ -19,6 +20,15 @@ def _universe_frame() -> pd.DataFrame:
     return pd.DataFrame({
         "code": ["600519", "000001", "300750", "688981", "600276", "830000"],
         "name": ["贵州茅台", "平安银行", "宁德时代", "中芯国际", "恒瑞医药", "北交样本"],
+    })
+
+
+def _sina_universe_frame() -> pd.DataFrame:
+    """AkShare ``stock_zh_a_spot`` 的代码/名称子集。"""
+    return pd.DataFrame({
+        "代码": ["sh600519", "sz000001", "sz300750", "bj920000"],
+        "名称": ["贵州茅台", "平安银行", "宁德时代", "北交样本"],
+        "最新价": [1500.0, 10.0, 200.0, 14.5],
     })
 
 
@@ -110,6 +120,34 @@ def test_search_dedups_duplicate_symbols(monkeypatch):
     assert len(df) == 1
 
 
+@pytest.mark.parametrize(
+    "primary_error",
+    [
+        ConnectionError("eastmoney down"),
+        RequestsJSONDecodeError("Expecting value", "", 0),
+    ],
+)
+def test_search_falls_back_to_sina_on_primary_response_failure(
+    monkeypatch, primary_error
+):
+    import akshare
+
+    def primary_down():
+        raise primary_error
+
+    monkeypatch.setattr(akshare, "stock_info_a_code_name", primary_down)
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", _sina_universe_frame)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
+    monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
+    _no_sleep(monkeypatch)
+
+    df = search_stock_symbols("茅台")
+
+    assert df.to_dict("records") == [
+        {"symbol": "600519.SH", "name": "贵州茅台", "market": "SH"}
+    ]
+
+
 def test_search_network_failure_raises(monkeypatch):
     import akshare
 
@@ -117,11 +155,12 @@ def test_search_network_failure_raises(monkeypatch):
         raise ConnectionError("universe down")
 
     monkeypatch.setattr(akshare, "stock_info_a_code_name", down)
+    monkeypatch.setattr(akshare, "stock_zh_a_spot", down)
     monkeypatch.setattr(fetch_mod, "_stock_universe_cache", None)
     monkeypatch.setattr(fetch_mod, "_stock_universe_cached_at", None)
     _no_sleep(monkeypatch)
 
-    with pytest.raises(NoDataError):
+    with pytest.raises(NoDataError, match="eastmoney、sina"):
         search_stock_symbols("600519")
 
 
