@@ -79,6 +79,13 @@
 
 详细说明见 [架构文档](docs/architecture.md)、[角色边界](docs/role_boundaries.md) 与 [团队规范](docs/team_conventions.md)。
 
+## 在线访问
+
+- Streamlit Cloud：[https://stock-analysis-system-25151407.streamlit.app/](https://stock-analysis-system-25151407.streamlit.app/)
+- 项目介绍：[https://stock-analysis-system-25151407.streamlit.app/about.html](https://stock-analysis-system-25151407.streamlit.app/about.html)
+
+在线行情依赖公开上游接口，遇到网络波动或限流时可改用页面中的离线样例完成稳定演示。
+
 ## 本地运行
 
 环境建议：Python 3.11+。
