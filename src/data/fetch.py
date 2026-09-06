@@ -658,11 +658,45 @@ _stock_universe_cache: pd.DataFrame | None = None
 _stock_universe_cached_at: float | None = None
 
 
+def _convert_stock_universe(raw: pd.DataFrame, provider: str) -> pd.DataFrame:
+    """Normalize one AkShare directory provider to the search schema."""
+    if raw is None or raw.empty:
+        raise NoDataError(f"{provider} 股票代码表为空")
+
+    if provider == "eastmoney":
+        required = {"code", "name"}
+        if not required.issubset(raw.columns):
+            raise NoDataError("eastmoney 股票代码表缺少 code/name 列")
+        codes = raw["code"].astype("string").str.strip().str.zfill(6)
+        symbols = codes.map(_symbol_with_exchange_safe)
+        names = raw["name"].astype("string").str.strip()
+    elif provider == "sina":
+        required = {"代码", "名称"}
+        if not required.issubset(raw.columns):
+            raise NoDataError("sina 股票代码表缺少 代码/名称 列")
+        symbols = raw["代码"].astype("string").str.strip().map(
+            _tx_symbol_with_exchange_safe
+        )
+        codes = symbols.str[:6]
+        names = raw["名称"].astype("string").str.strip()
+    else:
+        raise ValueError(f"不支持的股票目录 Provider：{provider}")
+
+    df = pd.DataFrame({"code": codes, "symbol": symbols, "name": names})
+    df = df.dropna(subset=["code", "symbol", "name"])
+    df = df[df["name"].ne("")]
+    if df.empty:
+        raise NoDataError(f"{provider} 股票代码表没有支持的沪深 A 股")
+    df["market"] = df["symbol"].str[-2:]
+    return df[["code", "symbol", "name", "market"]].reset_index(drop=True)
+
+
 def _get_stock_universe() -> pd.DataFrame:
     """在线拉取全市场沪深 A 股代码/名称表，列 ``code, symbol, name, market``。
 
-    数据源 AkShare ``stock_info_a_code_name``（东财）。只保留沪（6）/深（0、3），
-    北交所（4/8/92）等不支持的市场被剔除。网络失败抛 ``NoDataError``；不写本地文件。
+    先使用 AkShare ``stock_info_a_code_name``（东财），上游网络或空响应导致目录
+    不可用时回退到 ``stock_zh_a_spot``（新浪）。只保留沪（6）/深（0、3），
+    北交所等不支持的市场被剔除。双源失败抛 ``NoDataError``；不写本地文件。
     """
     global _stock_universe_cache, _stock_universe_cached_at
     now = time.monotonic()
@@ -675,23 +709,30 @@ def _get_stock_universe() -> pd.DataFrame:
 
     import akshare as ak
 
-    try:
-        raw = _retry(ak.stock_info_a_code_name, max_retries=1)
-    except _RETRYABLE_EXCEPTIONS as exc:
-        raise NoDataError(f"股票代码表获取失败：{exc}") from exc
-    if raw is None or raw.empty or not {"code", "name"}.issubset(raw.columns):
-        raise NoDataError("股票代码表为空或缺少 code/name 列")
+    providers = [
+        ("eastmoney", ak.stock_info_a_code_name, 1),
+        ("sina", ak.stock_zh_a_spot, 0),
+    ]
+    recoverable = _RETRYABLE_EXCEPTIONS + (NoDataError,)
+    failures: list[str] = []
+    for provider, fetcher, retries in providers:
+        try:
+            raw = _retry(fetcher, max_retries=retries)
+            df = _convert_stock_universe(raw, provider)
+        except recoverable as exc:
+            logger.warning("股票目录源 %s 失败：%s", provider, exc)
+            failures.append(f"{provider}: {exc}")
+            continue
 
-    df = pd.DataFrame({
-        "code": raw["code"].astype(str).str.strip(),
-        "name": raw["name"].astype(str).str.strip(),
-    })
-    df["symbol"] = df["code"].map(_symbol_with_exchange_safe)  # 北交所等→None
-    df = df.dropna(subset=["symbol"])
-    df["market"] = df["symbol"].str[-2:]
-    _stock_universe_cache = df[["code", "symbol", "name", "market"]].reset_index(drop=True)
-    _stock_universe_cached_at = now
-    return _stock_universe_cache.copy()
+        df.attrs["provider"] = provider
+        _stock_universe_cache = df
+        _stock_universe_cached_at = now
+        return _stock_universe_cache.copy()
+
+    details = "；".join(failures) if failures else "没有可用返回"
+    raise NoDataError(
+        "股票代码表获取失败（已尝试 eastmoney、sina）：" + details
+    )
 
 
 def search_stock_symbols(query: str, *, limit: int = 20) -> pd.DataFrame:
